@@ -8,6 +8,8 @@ type SnapshotProject = {
   title: string
   active: boolean
   received_to_date: number
+  spent_to_date: number
+  balance_to_date: number
   expected_total: number
   remaining: number
   agency_fee_to_date: number
@@ -20,6 +22,8 @@ type OverviewSnapshot = {
   totals: {
     active_projects_count: number
     received_total: number
+    spent_total: number
+    balance_total: number
     planned_total: number
     expected_total: number
     agency_fee_to_date: number
@@ -257,9 +261,9 @@ export default function OverviewPage() {
       </div>
 
       {snapshot && (
-        <div className="dashboard-strip">
+        <div className="overview-kpi-strip">
           <div className="kpi-card">
-            <div className="muted">Активных проектов</div>
+            <div className="muted">Проекты</div>
             <div className="kpi-value">{snapshot.totals.active_projects_count}</div>
           </div>
           <div className="kpi-card">
@@ -267,12 +271,26 @@ export default function OverviewPage() {
             <div className="kpi-value">{toMoney(snapshot.totals.received_total)}</div>
           </div>
           <div className="kpi-card">
-            <div className="muted">Ожидаем всего</div>
-            <div className="kpi-value">{toMoney(snapshot.totals.expected_total)}</div>
+            <div className="muted">Потрачено</div>
+            <div className="kpi-value">{toMoney(snapshot.totals.spent_total)}</div>
           </div>
           <div className="kpi-card">
-            <div className="muted">В кармане</div>
+            <div className="muted">Агентские</div>
+            <div className="kpi-value">{toMoney(snapshot.totals.agency_fee_to_date)}</div>
+          </div>
+          <div className="kpi-card">
+            <div className="muted">Доп прибыль</div>
+            <div className="kpi-value">{toMoney(snapshot.totals.extra_profit_to_date)}</div>
+          </div>
+          <div className="kpi-card">
+            <div className="muted">Всего в кармане</div>
             <div className="kpi-value accent">{toMoney(snapshot.totals.in_pocket_to_date)}</div>
+          </div>
+          <div className="kpi-card">
+            <div className="muted">Баланс</div>
+            <div className={`kpi-value ${snapshot.totals.balance_total >= 0 ? "ok" : "bad"}`}>
+              {toMoney(snapshot.totals.balance_total)}
+            </div>
           </div>
         </div>
       )}
@@ -282,13 +300,12 @@ export default function OverviewPage() {
           <div className="grid">
             {(snapshot?.projects || []).map((p) => {
               const meta = metaById.get(p.project_id)
-              const spentToDate = Math.max(p.received_to_date - p.in_pocket_to_date, 0)
               return (
                 <Link key={p.project_id} to={`/projects/${p.project_id}`} className="project-tile">
                   <div className="project-tile-title">{p.title}</div>
                   <div className="muted">{meta?.client_name || "—"}</div>
                   <div className="muted">Получено на сегодня: {toMoney(p.received_to_date)}</div>
-                  <div className="muted">Потрачено на сегодня: {toMoney(spentToDate)}</div>
+                  <div className="muted">Потрачено по проекту: {toMoney(p.spent_to_date)}</div>
                 </Link>
               )
             })}
@@ -303,9 +320,11 @@ export default function OverviewPage() {
                 <tr>
                   <th>Проект</th>
                   <th>Получено</th>
-                  <th>Ожидаем</th>
-                  <th>Осталось</th>
-                  <th>В кармане</th>
+                  <th>Потрачено</th>
+                  <th>Агентские</th>
+                  <th>Доп прибыль</th>
+                  <th>Всего в кармане</th>
+                  <th>Баланс</th>
                 </tr>
               </thead>
               <tbody>
@@ -313,14 +332,16 @@ export default function OverviewPage() {
                   <tr key={p.project_id}>
                     <td><Link to={`/projects/${p.project_id}`}>{p.title}</Link></td>
                     <td>{toMoney(p.received_to_date)}</td>
-                    <td>{toMoney(p.expected_total)}</td>
-                    <td>{toMoney(p.remaining)}</td>
+                    <td>{toMoney(p.spent_to_date)}</td>
+                    <td>{toMoney(p.agency_fee_to_date)}</td>
+                    <td>{toMoney(p.extra_profit_to_date)}</td>
                     <td>{toMoney(p.in_pocket_to_date)}</td>
+                    <td className={p.balance_to_date >= 0 ? "ok" : "bad"}>{toMoney(p.balance_to_date)}</td>
                   </tr>
                 ))}
                 {(snapshot?.projects || []).length === 0 && (
                   <tr>
-                    <td colSpan={5} className="muted">Нет данных</td>
+                    <td colSpan={7} className="muted">Нет данных</td>
                   </tr>
                 )}
               </tbody>

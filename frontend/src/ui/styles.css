@@ -177,6 +177,12 @@ a {
   grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
+.overview-kpi-strip {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
 .kpi-card {
   background: transparent;
   border: 1px solid var(--line);
@@ -732,6 +738,10 @@ a {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
+  .overview-kpi-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .project-settings-grid {
     grid-template-columns: 1fr;
   }
@@ -772,6 +782,10 @@ a {
   }
 
   .dashboard-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .overview-kpi-strip {
     grid-template-columns: 1fr;
   }
 

@@ -234,6 +234,8 @@ class ProjectComputed(BaseModel):
 class SnapshotTotals(BaseModel):
     active_projects_count: int
     received_total: float
+    spent_total: float
+    balance_total: float
     planned_total: float
     expected_total: float
     agency_fee_to_date: float
@@ -245,6 +247,8 @@ class SnapshotProject(BaseModel):
     title: str
     active: bool
     received_to_date: float
+    spent_to_date: float
+    balance_to_date: float
     expected_total: float
     remaining: float
     agency_fee_to_date: float

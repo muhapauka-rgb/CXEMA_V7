@@ -46,6 +46,8 @@ def snapshot(at: date = Query(..., description="YYYY-MM-DD"), db: Session = Depe
             active.append(p)
 
     received_total = 0.0
+    spent_total = 0.0
+    balance_total = 0.0
     planned_total = 0.0
     expected_total = 0.0
     agency_fee_to_date = 0.0
@@ -54,18 +56,19 @@ def snapshot(at: date = Query(..., description="YYYY-MM-DD"), db: Session = Depe
 
     out_projects = []
     for p in active:
-        r_fact = received_to_date(db, p.id, at)
+        r = received_to_date(db, p.id, at)
         pl = planned_to_date(db, p.id, at)
-        r = r_fact + pl
         expected = float(p.expected_from_client_total)
-
         comp = compute_project_financials(db, p.id)
-        # MVP: extra_profit_to_date = вся доп прибыль проекта (без датировки)
+        spent = float(comp["expenses_total"])
         ep = float(comp["extra_profit_total"])
         agency = (float(p.agency_fee_percent) / 100.0) * r
         in_pocket = agency + ep
+        balance = r - spent
 
         received_total += r
+        spent_total += spent
+        balance_total += balance
         planned_total += pl
         expected_total += expected
         agency_fee_to_date += agency
@@ -77,6 +80,8 @@ def snapshot(at: date = Query(..., description="YYYY-MM-DD"), db: Session = Depe
             title=p.title,
             active=True,
             received_to_date=round(r,2),
+            spent_to_date=round(spent,2),
+            balance_to_date=round(balance,2),
             expected_total=round(expected,2),
             remaining=round(max(expected - r, 0.0),2),
             agency_fee_to_date=round(agency,2),
@@ -87,6 +92,8 @@ def snapshot(at: date = Query(..., description="YYYY-MM-DD"), db: Session = Depe
     totals = SnapshotTotals(
         active_projects_count=len(active),
         received_total=round(received_total,2),
+        spent_total=round(spent_total,2),
+        balance_total=round(balance_total,2),
         planned_total=round(planned_total,2),
         expected_total=round(expected_total,2),
         agency_fee_to_date=round(agency_fee_to_date,2),

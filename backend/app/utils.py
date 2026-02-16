@@ -2,7 +2,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 from sqlalchemy.orm import Session
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 
 from .models import Project, ExpenseGroup, ExpenseItem, ClientPaymentsPlan, ClientPaymentsFact
 
@@ -40,6 +40,29 @@ def compute_project_financials(db: Session, project_id: int) -> dict:
         "in_pocket": round(in_pocket, 2),
         "diff": round(diff, 2),
     }
+
+def expense_breakdown_to_date(db: Session, project_id: int, at: date) -> tuple[float, float]:
+    # "Потрачено" = базовые расходы. "Доп прибыль" считаем отдельно.
+    items = db.execute(
+        select(ExpenseItem).where(
+            ExpenseItem.project_id == project_id,
+            or_(ExpenseItem.planned_pay_date <= at, ExpenseItem.planned_pay_date.is_(None)),
+        )
+    ).scalars().all()
+
+    spent_base = 0.0
+    extra_profit = 0.0
+    for it in items:
+        base = float(it.base_total or 0.0)
+        if it.mode.value == "QTY_PRICE" and it.qty is not None and it.unit_price_base is not None:
+            qty = float(it.qty)
+            unit = float(it.unit_price_base)
+            base = unit if qty == 0 else qty * unit
+        spent_base += base
+        if it.extra_profit_enabled:
+            extra_profit += float(it.extra_profit_amount or 0.0)
+
+    return spent_base, extra_profit
 
 def is_project_active(project: Project, at: date) -> bool:
     if project.created_at.date() > at:
