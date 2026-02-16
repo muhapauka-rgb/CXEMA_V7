@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react"
 import { useParams } from "react-router-dom"
 import { apiDelete, apiGet, apiPatch, apiPost } from "../api"
 import { openNativePicker } from "../datePicker"
+import { formatNumberForInput, formatNumberValueForInput, parseInputNumber } from "../numberInput"
 
 type ItemMode = "SINGLE_TOTAL" | "QTY_PRICE"
 type AdjustmentType = "DISCOUNT" | "CREDIT_FROM_PREV" | "CARRY_TO_NEXT"
@@ -194,6 +195,10 @@ function toMoney(n: number): string {
   return Number(n || 0).toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
+function toMoneyInt(n: number): string {
+  return Number(n || 0).toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+}
+
 function itemInternalTotal(item: Item): number {
   const base = item.mode === "QTY_PRICE"
     ? Number(item.qty || 0) * Number(item.unit_price_base || 0)
@@ -204,17 +209,16 @@ function itemInternalTotal(item: Item): number {
 function parseNonNegative(raw: string, field: string, optional = false): number | undefined {
   const value = raw.trim()
   if (optional && value === "") return undefined
-  const normalized = value.replace(",", ".")
-  const n = Number(normalized)
-  if (!Number.isFinite(n) || n < 0) {
+  const n = parseInputNumber(value)
+  if (n == null || n < 0) {
     throw new Error(`${field}: невалидное число`)
   }
   return n
 }
 
 function parseDraftNumber(raw: string): number {
-  const n = Number(raw.trim().replace(",", "."))
-  return Number.isFinite(n) && n >= 0 ? n : 0
+  const n = parseInputNumber(raw)
+  return n != null && n >= 0 ? n : 0
 }
 
 function itemDraftTotal(draft: ItemSheetDraft): number {
@@ -266,6 +270,12 @@ function normalizeDateDraftInput(raw: string): string {
   const value = raw.trim()
   if (!value) return ""
   return parseFlexibleDate(value) || value
+}
+
+function normalizeNumberDraftInput(raw: string): string {
+  const value = raw.trim()
+  if (!value) return ""
+  return formatNumberForInput(value)
 }
 
 function parseOptionalDate(raw: string, field: string): string | null {
@@ -322,11 +332,11 @@ function itemToForm(item: Item): ItemFormState {
     group_id: String(item.group_id),
     title: item.title,
     mode: item.mode,
-    qty: item.qty == null ? "" : String(item.qty),
-    unit_price_base: item.unit_price_base == null ? "" : String(item.unit_price_base),
-    base_total: String(item.base_total),
+    qty: item.qty == null ? "" : formatNumberValueForInput(item.qty),
+    unit_price_base: item.unit_price_base == null ? "" : formatNumberValueForInput(item.unit_price_base),
+    base_total: formatNumberValueForInput(item.base_total),
     extra_profit_enabled: item.extra_profit_enabled,
-    extra_profit_amount: String(item.extra_profit_amount),
+    extra_profit_amount: formatNumberValueForInput(item.extra_profit_amount),
     planned_pay_date: item.planned_pay_date || "",
   }
 }
@@ -335,26 +345,24 @@ function itemToSheetDraft(item: Item): ItemSheetDraft {
   return {
     title: item.title,
     planned_pay_date: item.planned_pay_date || "",
-    qty: item.qty == null ? "" : String(item.qty),
-    unit_price_base: item.unit_price_base == null ? "" : String(item.unit_price_base),
-    base_total: String(item.base_total),
+    qty: item.qty == null ? "" : formatNumberValueForInput(item.qty),
+    unit_price_base: item.unit_price_base == null ? "" : formatNumberValueForInput(item.unit_price_base),
+    base_total: formatNumberValueForInput(item.base_total),
     include_in_estimate: item.include_in_estimate ?? true,
     extra_profit_enabled: item.extra_profit_enabled,
-    extra_profit_amount: String(item.extra_profit_amount),
+    extra_profit_amount: formatNumberValueForInput(item.extra_profit_amount),
   }
 }
 
 function tryCalcBaseTotal(qtyRaw: string, unitRaw: string): string | null {
-  const qty = qtyRaw.trim().replace(",", ".")
-  const unit = unitRaw.trim().replace(",", ".")
-  if (qty === "") return null
-  if (unit === "") return null
-  const q = Number(qty)
-  const u = Number(unit)
-  if (!Number.isFinite(q) || q < 0) return null
-  if (!Number.isFinite(u) || u < 0) return null
-  if (q === 0) return String(u)
-  return String(q * u)
+  if (qtyRaw.trim() === "") return null
+  if (unitRaw.trim() === "") return null
+  const q = parseInputNumber(qtyRaw)
+  const u = parseInputNumber(unitRaw)
+  if (q == null || q < 0) return null
+  if (u == null || u < 0) return null
+  if (q === 0) return formatNumberForInput(String(u))
+  return formatNumberForInput(String(q * u))
 }
 
 export default function ProjectPage() {
@@ -447,7 +455,7 @@ export default function ProjectPage() {
       setSettingsForm({
         title: p.title,
         client_name: p.client_name || "",
-        agency_fee_percent: String(p.agency_fee_percent ?? 10),
+        agency_fee_percent: formatNumberValueForInput(p.agency_fee_percent ?? 10),
         agency_fee_include_in_estimate: p.agency_fee_include_in_estimate ?? true,
         phones: parsePhones(p.client_phone),
       })
@@ -690,8 +698,7 @@ export default function ProjectPage() {
   }
 
   function handleZeroFocus(target: HTMLInputElement) {
-    const normalized = target.value.trim().replace(",", ".")
-    const n = Number(normalized)
+    const n = parseInputNumber(target.value)
     if (Number.isFinite(n) && n === 0) {
       target.select()
     }
@@ -792,7 +799,7 @@ export default function ProjectPage() {
   useEffect(() => {
     const drafts: Record<number, PaymentDraft> = {}
     for (const p of planPayments) {
-      drafts[p.id] = { pay_date: p.pay_date, amount: String(p.amount), note: p.note || "" }
+      drafts[p.id] = { pay_date: p.pay_date, amount: formatNumberValueForInput(p.amount), note: p.note || "" }
     }
     setPlanDrafts(drafts)
   }, [planPayments])
@@ -800,7 +807,7 @@ export default function ProjectPage() {
   useEffect(() => {
     const drafts: Record<number, PaymentDraft> = {}
     for (const p of factPayments) {
-      drafts[p.id] = { pay_date: p.pay_date, amount: String(p.amount), note: p.note || "" }
+      drafts[p.id] = { pay_date: p.pay_date, amount: formatNumberValueForInput(p.amount), note: p.note || "" }
     }
     setFactDrafts(drafts)
   }, [factPayments])
@@ -861,27 +868,27 @@ export default function ProjectPage() {
       <div className="dashboard-strip">
         <div className="kpi-card">
           <div className="muted">Стоимость проекта</div>
-          <div className="kpi-value">{toMoney(project.project_price_total)}</div>
+          <div className="kpi-value">{toMoneyInt(project.project_price_total)}</div>
         </div>
         <div className="kpi-card">
           <div className="muted">Расходы</div>
-          <div className="kpi-value">{toMoney(computed?.expenses_total || 0)}</div>
+          <div className="kpi-value">{toMoneyInt(computed?.expenses_total || 0)}</div>
         </div>
         <div className="kpi-card">
           <div className="muted">Агентские ({toPercentLabel(project.agency_fee_percent)}%)</div>
-          <div className="kpi-value">{toMoney(computed?.agency_fee || 0)}</div>
+          <div className="kpi-value">{toMoneyInt(computed?.agency_fee || 0)}</div>
         </div>
         <div className="kpi-card">
           <div className="muted">Доп прибыль</div>
-          <div className="kpi-value">{toMoney(computed?.extra_profit_total || 0)}</div>
+          <div className="kpi-value">{toMoneyInt(computed?.extra_profit_total || 0)}</div>
         </div>
         <div className="kpi-card">
           <div className="muted">В кармане</div>
-          <div className="kpi-value">{toMoney(computed?.in_pocket || 0)}</div>
+          <div className="kpi-value">{toMoneyInt(computed?.in_pocket || 0)}</div>
         </div>
         <div className="kpi-card">
           <div className="muted">Разница</div>
-          <div className={`kpi-value ${(computed?.diff || 0) === 0 ? "ok" : "bad"}`}>{toMoney(computed?.diff || 0)}</div>
+          <div className={`kpi-value ${(computed?.diff || 0) === 0 ? "ok" : "bad"}`}>{toMoneyInt(computed?.diff || 0)}</div>
         </div>
       </div>
 
@@ -978,13 +985,13 @@ export default function ProjectPage() {
                       <thead>
                         <tr>
                           <th>Статья</th>
-                          <th>Дата оплаты</th>
+                          <th>Дата<br />оплаты</th>
                           <th>Шт</th>
-                          <th>Цена за ед</th>
+                          <th>Цена<br />за ед</th>
                           <th>Сумма</th>
-                          <th>В смету</th>
-                          <th>Доп прибыль</th>
-                          <th>Сумма доп прибыли</th>
+                          <th>В<br />смету</th>
+                          <th>Доп<br />прибыль</th>
+                          <th>Сумма доп<br />прибыли</th>
                           <th />
                         </tr>
                       </thead>
@@ -1072,7 +1079,7 @@ export default function ProjectPage() {
                                     }))
                                   }}
                                   onBlur={(e) => {
-                                    const nextQty = e.currentTarget.value
+                                    const nextQty = normalizeNumberDraftInput(e.currentTarget.value)
                                     const autoTotal = tryCalcBaseTotal(nextQty, draft.unit_price_base)
                                     const next = { ...draft, qty: nextQty, base_total: autoTotal ?? draft.base_total }
                                     setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
@@ -1081,7 +1088,7 @@ export default function ProjectPage() {
                                   onKeyDown={(e) => {
                                     if (e.key !== "Enter") return
                                     e.preventDefault()
-                                    const nextQty = e.currentTarget.value
+                                    const nextQty = normalizeNumberDraftInput(e.currentTarget.value)
                                     const autoTotal = tryCalcBaseTotal(nextQty, draft.unit_price_base)
                                     const next = { ...draft, qty: nextQty, base_total: autoTotal ?? draft.base_total }
                                     commitItemDraft(it, next)
@@ -1106,7 +1113,7 @@ export default function ProjectPage() {
                                     }))
                                   }}
                                   onBlur={(e) => {
-                                    const nextUnit = e.currentTarget.value
+                                    const nextUnit = normalizeNumberDraftInput(e.currentTarget.value)
                                     const autoTotal = tryCalcBaseTotal(draft.qty, nextUnit)
                                     const next = { ...draft, unit_price_base: nextUnit, base_total: autoTotal ?? draft.base_total }
                                     setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
@@ -1115,7 +1122,7 @@ export default function ProjectPage() {
                                   onKeyDown={(e) => {
                                     if (e.key !== "Enter") return
                                     e.preventDefault()
-                                    const nextUnit = e.currentTarget.value
+                                    const nextUnit = normalizeNumberDraftInput(e.currentTarget.value)
                                     const autoTotal = tryCalcBaseTotal(draft.qty, nextUnit)
                                     const next = { ...draft, unit_price_base: nextUnit, base_total: autoTotal ?? draft.base_total }
                                     commitItemDraft(it, next)
@@ -1131,14 +1138,14 @@ export default function ProjectPage() {
                                   onChange={(e) => setItemDrafts((prev) => ({ ...prev, [it.id]: { ...draft, base_total: e.target.value } }))}
                                   onFocus={(e) => handleZeroFocus(e.currentTarget)}
                                   onBlur={(e) => {
-                                    const next = { ...draft, base_total: e.currentTarget.value }
+                                    const next = { ...draft, base_total: normalizeNumberDraftInput(e.currentTarget.value) }
                                     setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
                                     void persistItemRow(it, next)
                                   }}
                                   onKeyDown={(e) => {
                                     if (e.key !== "Enter") return
                                     e.preventDefault()
-                                    const next = { ...draft, base_total: e.currentTarget.value }
+                                    const next = { ...draft, base_total: normalizeNumberDraftInput(e.currentTarget.value) }
                                     commitItemDraft(it, next)
                                   }}
                                 />
@@ -1181,14 +1188,14 @@ export default function ProjectPage() {
                                     onChange={(e) => setItemDrafts((prev) => ({ ...prev, [it.id]: { ...draft, extra_profit_amount: e.target.value } }))}
                                     onFocus={(e) => handleZeroFocus(e.currentTarget)}
                                     onBlur={(e) => {
-                                      const next = { ...draft, extra_profit_amount: e.currentTarget.value }
+                                      const next = { ...draft, extra_profit_amount: normalizeNumberDraftInput(e.currentTarget.value) }
                                       setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
                                       void persistItemRow(it, next)
                                     }}
                                     onKeyDown={(e) => {
                                       if (e.key !== "Enter") return
                                       e.preventDefault()
-                                      const next = { ...draft, extra_profit_amount: e.currentTarget.value }
+                                      const next = { ...draft, extra_profit_amount: normalizeNumberDraftInput(e.currentTarget.value) }
                                       commitItemDraft(it, next)
                                     }}
                                   />
@@ -1254,8 +1261,8 @@ export default function ProjectPage() {
               <div className="payments-list-wrap">
                 {paymentRows.map((row) => {
                   const draft = row.kind === "plan"
-                    ? (planDrafts[row.id] || { pay_date: row.pay_date, amount: String(row.amount), note: row.note || "" })
-                    : (factDrafts[row.id] || { pay_date: row.pay_date, amount: String(row.amount), note: row.note || "" })
+                    ? (planDrafts[row.id] || { pay_date: row.pay_date, amount: formatNumberValueForInput(row.amount), note: row.note || "" })
+                    : (factDrafts[row.id] || { pay_date: row.pay_date, amount: formatNumberValueForInput(row.amount), note: row.note || "" })
                   return (
                     <div className="payments-line" key={`${row.kind}-${row.id}`}>
                       <div className="date-cell">
@@ -1317,7 +1324,7 @@ export default function ProjectPage() {
                           else setFactDrafts((prev) => ({ ...prev, [row.id]: next }))
                         }}
                         onBlur={(e) => {
-                          const next = { ...draft, amount: e.currentTarget.value }
+                          const next = { ...draft, amount: normalizeNumberDraftInput(e.currentTarget.value) }
                           if (row.kind === "plan") setPlanDrafts((prev) => ({ ...prev, [row.id]: next }))
                           else setFactDrafts((prev) => ({ ...prev, [row.id]: next }))
                           void persistPaymentRow(row.kind, row.id, next)
@@ -1325,7 +1332,7 @@ export default function ProjectPage() {
                         onKeyDown={(e) => {
                           if (e.key !== "Enter") return
                           e.preventDefault()
-                          const next = { ...draft, amount: e.currentTarget.value }
+                          const next = { ...draft, amount: normalizeNumberDraftInput(e.currentTarget.value) }
                           if (row.kind === "plan") setPlanDrafts((prev) => ({ ...prev, [row.id]: next }))
                           else setFactDrafts((prev) => ({ ...prev, [row.id]: next }))
                           void persistPaymentRow(row.kind, row.id, next)
@@ -1534,6 +1541,12 @@ export default function ProjectPage() {
                 className="input"
                 value={settingsForm.agency_fee_percent}
                 onChange={(e) => setSettingsForm((prev) => ({ ...prev, agency_fee_percent: e.target.value }))}
+                onBlur={(e) => setSettingsForm((prev) => ({ ...prev, agency_fee_percent: normalizeNumberDraftInput(e.currentTarget.value) }))}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return
+                  e.preventDefault()
+                  setSettingsForm((prev) => ({ ...prev, agency_fee_percent: normalizeNumberDraftInput(e.currentTarget.value) }))
+                }}
                 placeholder="10"
               />
             </label>

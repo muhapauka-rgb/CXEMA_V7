@@ -5,8 +5,8 @@
   --bg-soft: #0b111a;
   --surface: #111924;
   --surface-soft: #151f2c;
-  --line: rgba(255, 255, 255, 0.09);
-  --line-strong: rgba(255, 255, 255, 0.16);
+  --line: transparent;
+  --line-strong: transparent;
   --text: #edf1f7;
   --muted: rgba(237, 241, 247, 0.68);
   --accent: #ff2da1;
@@ -24,10 +24,7 @@ body {
   font-size: 14px;
   line-height: 1.35;
   color: var(--text);
-  background:
-    radial-gradient(1100px 540px at 105% -10%, rgba(143, 223, 255, 0.08), transparent 60%),
-    radial-gradient(900px 460px at -15% -5%, rgba(193, 255, 91, 0.07), transparent 56%),
-    linear-gradient(180deg, #04070d 0%, var(--bg) 100%);
+  background: var(--bg);
 }
 
 a {
@@ -49,9 +46,9 @@ a {
   gap: 8px;
   align-items: center;
   padding: 10px 14px;
-  background: rgba(4, 8, 14, 0.9);
+  background: transparent;
   border-bottom: 1px solid var(--line);
-  backdrop-filter: blur(12px);
+  backdrop-filter: none;
 }
 
 .brand {
@@ -70,18 +67,20 @@ a {
   padding: 7px 11px;
   border-radius: 10px;
   border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.03);
+  background: transparent;
   color: var(--text);
   cursor: pointer;
   transition: background-color 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
 }
 
 .btn:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: transparent;
   border-color: var(--line-strong);
 }
 
 .btn:active {
+  background: #ffffff;
+  color: #000000;
   transform: translateY(1px);
 }
 
@@ -101,9 +100,14 @@ a {
 }
 
 .nav-link.active {
-  background: #f3f5fa;
-  color: #0a1019;
+  background: #ffffff;
+  color: #000000;
   border-color: transparent;
+}
+
+.nav-link.active:hover {
+  background: #ffffff;
+  color: #000000;
 }
 
 .input {
@@ -144,7 +148,7 @@ a {
 
 .panel,
 .card {
-  background: linear-gradient(160deg, rgba(18, 26, 37, 0.94), rgba(12, 19, 29, 0.95));
+  background: transparent;
   border: 1px solid var(--line);
   border-radius: 14px;
   padding: 11px;
@@ -174,7 +178,7 @@ a {
 }
 
 .kpi-card {
-  background: linear-gradient(145deg, var(--surface-soft), var(--surface));
+  background: transparent;
   border: 1px solid var(--line);
   border-radius: 14px;
   padding: 11px;
@@ -290,7 +294,7 @@ a {
   padding: 10px 34px 10px 12px;
   border-radius: 12px;
   border: 1px solid var(--line);
-  background: linear-gradient(150deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.02));
+  background: transparent;
   transition: border-color 0.16s ease, transform 0.16s ease;
 }
 
@@ -324,7 +328,7 @@ a {
   overflow: auto;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: rgba(6, 10, 16, 0.5);
+  background: transparent;
 }
 
 .table {
@@ -337,7 +341,7 @@ a {
 .table th,
 .table td {
   padding: 7px 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  border-bottom: none;
   text-align: left;
   vertical-align: top;
 }
@@ -345,7 +349,7 @@ a {
 .table th {
   color: rgba(237, 241, 247, 0.78);
   font-weight: 400;
-  background: rgba(255, 255, 255, 0.03);
+  background: transparent;
 }
 
 .table tr:last-child td {
@@ -357,15 +361,20 @@ a {
 }
 
 .tab-active {
-  border-color: rgba(214, 255, 85, 0.45);
-  background: rgba(214, 255, 85, 0.16);
-  color: #ebf8b5;
+  border-color: transparent;
+  background: #ffffff;
+  color: #000000;
+}
+
+.tab-active:hover {
+  background: #ffffff;
+  color: #000000;
 }
 
 .timeline-panel {
   margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: none;
 }
 
 .month-input {
@@ -434,14 +443,14 @@ a {
   border: 1px solid var(--line);
   border-radius: 12px;
   overflow: hidden;
-  background: rgba(8, 13, 21, 0.86);
+  background: transparent;
 }
 
 .sheet-group-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: #070a0f;
+  background: transparent;
   color: #f5f8ff;
   font-weight: 700;
   padding: 8px 11px;
@@ -536,6 +545,52 @@ a {
 .expense-table td:last-child {
   min-width: 56px;
   width: 56px;
+}
+
+.expense-table th {
+  white-space: normal;
+  line-height: 1.15;
+  vertical-align: middle;
+}
+
+.expense-table th:nth-child(1),
+.expense-table td:nth-child(1),
+.expense-table td:nth-child(1) .input {
+  text-align: left;
+}
+
+.expense-table th:nth-child(2),
+.expense-table td:nth-child(2),
+.expense-table td:nth-child(2) .input {
+  text-align: center;
+}
+
+.expense-table th:nth-child(3),
+.expense-table th:nth-child(4),
+.expense-table th:nth-child(5),
+.expense-table th:nth-child(8),
+.expense-table td:nth-child(3),
+.expense-table td:nth-child(4),
+.expense-table td:nth-child(5),
+.expense-table td:nth-child(8),
+.expense-table td:nth-child(3) .input,
+.expense-table td:nth-child(4) .input,
+.expense-table td:nth-child(5) .input,
+.expense-table td:nth-child(8) .input {
+  text-align: right;
+}
+
+.expense-table th:nth-child(6),
+.expense-table th:nth-child(7),
+.expense-table th:last-child,
+.expense-table td:nth-child(6),
+.expense-table td:nth-child(7),
+.expense-table td:last-child {
+  text-align: center;
+}
+
+.expense-table td:nth-child(5) .row-total-hint {
+  text-align: right;
 }
 
 .payments-table {

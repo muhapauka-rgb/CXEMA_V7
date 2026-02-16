@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { apiGet } from "../api"
+import { formatNumberForInput, parseInputNumber } from "../numberInput"
 
 type LifeProject = {
   project_id: number
@@ -28,14 +29,14 @@ function toMoney(v: number): string {
 }
 
 export default function LifePage() {
-  const [targetRaw, setTargetRaw] = useState("100000")
+  const [targetRaw, setTargetRaw] = useState("100 000")
   const [data, setData] = useState<LifeResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  async function load() {
-    const n = Number(targetRaw.replace(",", "."))
-    if (!Number.isFinite(n) || n < 0) {
+  async function load(sourceValue?: string) {
+    const n = parseInputNumber(sourceValue ?? targetRaw)
+    if (n == null || n < 0) {
       setError("Сумма на жизнь должна быть неотрицательным числом")
       return
     }
@@ -69,6 +70,14 @@ export default function LifePage() {
               style={{ width: 170 }}
               value={targetRaw}
               onChange={(e) => setTargetRaw(e.target.value)}
+              onBlur={(e) => setTargetRaw(formatNumberForInput(e.currentTarget.value))}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return
+                e.preventDefault()
+                const next = formatNumberForInput(e.currentTarget.value)
+                setTargetRaw(next)
+                void load(next)
+              }}
               placeholder="Сумма на жизнь"
             />
             <button className="btn" disabled={loading} onClick={() => void load()}>

@@ -58,7 +58,7 @@ const EMPTY_FORM: CreateProjectForm = {
 }
 
 function toMoney(v: number): string {
-  return Number(v || 0).toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return Number(v || 0).toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 0 })
 }
 
 function monthKey(d: Date): string {
@@ -282,12 +282,13 @@ export default function OverviewPage() {
           <div className="grid">
             {(snapshot?.projects || []).map((p) => {
               const meta = metaById.get(p.project_id)
+              const spentToDate = Math.max(p.received_to_date - p.in_pocket_to_date, 0)
               return (
                 <Link key={p.project_id} to={`/projects/${p.project_id}`} className="project-tile">
                   <div className="project-tile-title">{p.title}</div>
-                  <div className="muted">Организация: {meta?.client_name || "—"}</div>
-                  <div className="muted">Получено: {toMoney(p.received_to_date)}</div>
-                  <div className="muted">Осталось: {toMoney(p.remaining)}</div>
+                  <div className="muted">{meta?.client_name || "—"}</div>
+                  <div className="muted">Получено на сегодня: {toMoney(p.received_to_date)}</div>
+                  <div className="muted">Потрачено на сегодня: {toMoney(spentToDate)}</div>
                 </Link>
               )
             })}
