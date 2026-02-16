@@ -1,0 +1,85 @@
+// Auto-detect API base (so you don't have to fight with ports)
+const ENV_BASE = (import.meta as any).env?.VITE_API_BASE as string | undefined
+
+let cachedBase: string | null = null
+
+function withTimeout(ms: number) {
+  const ctrl = new AbortController()
+  const id = setTimeout(() => ctrl.abort(), ms)
+  return { ctrl, done: () => clearTimeout(id) }
+}
+
+async function probe(base: string): Promise<boolean> {
+  const { ctrl, done } = withTimeout(800)
+  try {
+    const res = await fetch(`${base}/health`, { signal: ctrl.signal })
+    return res.ok
+  } catch {
+    return false
+  } finally {
+    done()
+  }
+}
+
+async function detectBase(): Promise<string> {
+  if (ENV_BASE) return ENV_BASE.replace(/\/$/, '')
+  if (cachedBase) return cachedBase
+
+  const host = window.location.hostname || 'localhost'
+  const ports = [8011, 18011, 28011, 48011]
+
+  for (const p of ports) {
+    const base = `http://${host}:${p}`
+    // eslint-disable-next-line no-await-in-loop
+    if (await probe(base)) {
+      cachedBase = base
+      return base
+    }
+  }
+
+  // Fallback (will produce a clear error later)
+  cachedBase = `http://${host}:8011`
+  return cachedBase
+}
+
+async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
+  const base = await detectBase()
+  const url = `${base}${path}`
+
+  const res = await fetch(url, {
+    method,
+    headers: method === 'POST' ? { 'Content-Type': 'application/json' } : undefined,
+    body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
+  })
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(text || `${method} ${url} -> ${res.status}`)
+  }
+  return res.json() as Promise<T>
+}
+
+export async function apiGet<T>(path: string): Promise<T> {
+  return request<T>('GET', path)
+}
+
+export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+  return request<T>('POST', path, body)
+}
+const API_BASE = 'http://localhost:18011'
+
+export async function apiGet<T>(path: string): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json() as Promise<T>
+}
+
+export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json() as Promise<T>
+}
