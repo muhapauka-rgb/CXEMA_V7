@@ -17,7 +17,9 @@ def compute_project_financials(db: Session, project_id: int) -> dict:
     for it in items:
         base = it.base_total
         if it.mode.value == "QTY_PRICE" and it.qty is not None and it.unit_price_base is not None:
-            base = float(it.qty) * float(it.unit_price_base)
+            qty = float(it.qty)
+            unit = float(it.unit_price_base)
+            base = unit if qty == 0 else qty * unit
         extra = float(it.extra_profit_amount) if it.extra_profit_enabled else 0.0
         expenses_total += base + extra
         extra_profit_total += extra

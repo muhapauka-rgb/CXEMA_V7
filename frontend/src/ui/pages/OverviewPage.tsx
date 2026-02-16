@@ -1,74 +1,412 @@
-import { useEffect, useMemo, useState } from 'react'
-import ReactFlow, { Background, Controls, Node, Edge } from 'reactflow'
-import 'reactflow/dist/style.css'
-import { apiGet } from '../api'
+import { useEffect, useMemo, useRef, useState } from "react"
+import { Link, useSearchParams } from "react-router-dom"
+import { apiGet, apiPost } from "../api"
+import { openNativePicker } from "../datePicker"
 
-type OverviewMap = { at: string, root: { title: string, children?: any[] } }
-
-function todayISO() {
-  const d = new Date()
-  const z = (n: number) => String(n).padStart(2,'0')
-  return `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}`
+type SnapshotProject = {
+  project_id: number
+  title: string
+  active: boolean
+  received_to_date: number
+  expected_total: number
+  remaining: number
+  agency_fee_to_date: number
+  extra_profit_to_date: number
+  in_pocket_to_date: number
 }
 
-function toFlow(map: OverviewMap): { nodes: Node[], edges: Edge[] } {
-  const nodes: Node[] = []
-  const edges: Edge[] = []
-
-  let x = 0
-  let y = 0
-  const gapX = 260
-  const gapY = 90
-  let idCounter = 1
-
-  const makeId = () => `n${idCounter++}`
-
-  const walk = (title: string, children: any[] | undefined, parentId: string | null, depth: number, index: number) => {
-    const id = makeId()
-    const pos = { x: depth * gapX, y: (index + y) * gapY }
-    nodes.push({ id, data: { label: title }, position: pos, style: { background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 12, padding: 10, color: '#e8ecf3', width: 240 } })
-    if (parentId) edges.push({ id: `e-${parentId}-${id}`, source: parentId, target: id })
-    if (children && children.length) {
-      children.forEach((c, i) => walk(c.title, c.children, id, depth + 1, i))
-    }
-    return id
+type OverviewSnapshot = {
+  meta: { at: string; currency: string }
+  totals: {
+    active_projects_count: number
+    received_total: number
+    planned_total: number
+    expected_total: number
+    agency_fee_to_date: number
+    extra_profit_to_date: number
+    in_pocket_to_date: number
   }
+  projects: SnapshotProject[]
+}
 
-  walk(map.root.title, map.root.children, null, 0, 0)
-  return { nodes, edges }
+type OverviewMonthRange = {
+  min_month: string
+  max_month: string
+}
+
+type ProjectMeta = {
+  id: number
+  title: string
+  client_name?: string | null
+  client_email?: string | null
+  client_phone?: string | null
+  created_at: string
+}
+
+type CreateProjectForm = {
+  title: string
+  client_name: string
+  client_email: string
+  client_phone: string
+}
+
+const EMPTY_FORM: CreateProjectForm = {
+  title: "",
+  client_name: "",
+  client_email: "",
+  client_phone: "",
+}
+
+function toMoney(v: number): string {
+  return Number(v || 0).toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+function monthKey(d: Date): string {
+  const z = (n: number) => String(n).padStart(2, "0")
+  return `${d.getFullYear()}-${z(d.getMonth() + 1)}`
+}
+
+function parseMonthKey(key: string): Date {
+  const [y, m] = key.split("-").map((v) => Number(v))
+  if (!Number.isFinite(y) || !Number.isFinite(m) || m < 1 || m > 12) {
+    const now = new Date()
+    return new Date(now.getFullYear(), now.getMonth(), 1)
+  }
+  return new Date(y, m - 1, 1)
+}
+
+function monthLabelRu(key: string): string {
+  const d = parseMonthKey(key)
+  const month = new Intl.DateTimeFormat("ru-RU", { month: "long" }).format(d)
+  return `${month} ${d.getFullYear()}`
+}
+
+function buildMonthRange(start: Date, end: Date): string[] {
+  const out: string[] = []
+  let y = start.getFullYear()
+  let m = start.getMonth()
+  const ey = end.getFullYear()
+  const em = end.getMonth()
+  while (y < ey || (y === ey && m <= em)) {
+    out.push(monthKey(new Date(y, m, 1)))
+    m += 1
+    if (m > 11) {
+      m = 0
+      y += 1
+    }
+  }
+  return out
+}
+
+function snapshotAtFromMonth(selected: string): string {
+  const today = new Date()
+  const m = parseMonthKey(selected)
+  const monthEnd = new Date(m.getFullYear(), m.getMonth() + 1, 0)
+  const at = monthEnd > today ? today : monthEnd
+  const z = (n: number) => String(n).padStart(2, "0")
+  return `${at.getFullYear()}-${z(at.getMonth() + 1)}-${z(at.getDate())}`
 }
 
 export default function OverviewPage() {
-  const [at, setAt] = useState<string>(todayISO())
-  const [map, setMap] = useState<OverviewMap | null>(null)
+  const [search, setSearch] = useSearchParams()
+  const [snapshot, setSnapshot] = useState<OverviewSnapshot | null>(null)
+  const [projectsMeta, setProjectsMeta] = useState<ProjectMeta[]>([])
+  const [months, setMonths] = useState<string[]>([monthKey(new Date())])
+  const [selectedMonth, setSelectedMonth] = useState(monthKey(new Date()))
+  const [form, setForm] = useState<CreateProjectForm>(EMPTY_FORM)
+  const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const monthPickerRef = useRef<HTMLInputElement | null>(null)
+
+  const createOpen = search.get("create") === "1"
+  const at = useMemo(() => snapshotAtFromMonth(selectedMonth), [selectedMonth])
+  const selectedIdx = Math.max(0, months.indexOf(selectedMonth))
+  const metaById = useMemo(() => new Map(projectsMeta.map((p) => [p.id, p])), [projectsMeta])
+
+  async function loadProjectsMeta() {
+    const data = await apiGet<ProjectMeta[]>("/api/projects")
+    setProjectsMeta(data)
+  }
+
+  async function loadMonthRange() {
+    const rangeRaw = await apiGet<OverviewMonthRange>("/api/overview/month-range")
+    const start = parseMonthKey(rangeRaw.min_month)
+    const end = parseMonthKey(rangeRaw.max_month)
+    const range = buildMonthRange(start <= end ? start : end, start <= end ? end : start)
+    setMonths(range)
+    if (!range.includes(selectedMonth)) {
+      setSelectedMonth(range[range.length - 1])
+    }
+  }
+
+  async function loadSnapshot() {
+    const snap = await apiGet<OverviewSnapshot>(`/api/overview/snapshot?at=${at}`)
+    setSnapshot(snap)
+  }
+
+  async function loadAll() {
+    try {
+      setError(null)
+      await Promise.all([loadProjectsMeta(), loadMonthRange(), loadSnapshot()])
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
+  async function createProject() {
+    const title = form.title.trim()
+    if (!title) {
+      setError("Укажи название проекта")
+      return
+    }
+    try {
+      setError(null)
+      setCreating(true)
+      await apiPost("/api/projects", {
+        title,
+        client_name: form.client_name.trim() || null,
+        client_email: form.client_email.trim() || null,
+        client_phone: form.client_phone.trim() || null,
+        project_price_total: 0,
+        expected_from_client_total: 0,
+      })
+      setForm(EMPTY_FORM)
+      setSearch((prev) => {
+        const next = new URLSearchParams(prev)
+        next.delete("create")
+        return next
+      })
+      await loadAll()
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  useEffect(() => {
+    void loadAll()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     setError(null)
-    apiGet<OverviewMap>(`/api/overview/map?at=${at}`)
-      .then(setMap)
-      .catch((e) => setError(String(e)))
+    void loadSnapshot().catch((e) => setError(String(e)))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [at])
 
-  const flow = useMemo(() => (map ? toFlow(map) : { nodes: [], edges: [] }), [map])
+  useEffect(() => {
+    if (!createOpen) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !creating) {
+        setSearch((prev) => {
+          const next = new URLSearchParams(prev)
+          next.delete("create")
+          return next
+        })
+      }
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [createOpen, creating, setSearch])
 
   return (
-    <div className="grid">
-      <div className="card">
-        <div className="row">
-          <div className="h1">Итоги — дата T</div>
-          <input className="input" style={{ maxWidth: 200 }} type="date" value={at} onChange={(e) => setAt(e.target.value)} />
-          <div className="muted">Backend: :8011 • Frontend: :3011</div>
+    <>
+    <div className={`grid ${createOpen ? "page-content-muted" : ""}`}>
+      <div className="panel top-panel">
+        <div className="row" style={{ justifyContent: "space-between" }}>
+          <div>
+            <div className="h1" style={{ marginBottom: 4 }}>Итоги</div>
+          </div>
+          <button className="btn" onClick={() => void loadAll()}>Обновить</button>
         </div>
-        {error && <div className="muted" style={{ marginTop: 8 }}>{error}</div>}
+
+        <div className="timeline-panel">
+          <div className="timeline-current-row">
+            <button
+              className="timeline-current-month"
+              onClick={() => openNativePicker(monthPickerRef.current, true)}
+            >
+              {monthLabelRu(selectedMonth)}
+            </button>
+            <input
+              ref={monthPickerRef}
+              className="timeline-month-picker-hidden"
+              type="month"
+              value={selectedMonth}
+              min={months[0] || undefined}
+              max={months[months.length - 1] || undefined}
+              onChange={(e) => {
+                if (months.includes(e.target.value)) setSelectedMonth(e.target.value)
+              }}
+            />
+          </div>
+          <input
+            className="timeline-range"
+            type="range"
+            min={0}
+            max={Math.max(0, months.length - 1)}
+            step={1}
+            value={selectedIdx}
+            onChange={(e) => {
+              const idx = Number(e.target.value)
+              setSelectedMonth(months[idx] || months[months.length - 1])
+            }}
+          />
+        </div>
       </div>
 
-      <div className="card" style={{ height: 560 }}>
-        <ReactFlow nodes={flow.nodes} edges={flow.edges} fitView>
-          <Background />
-          <Controls />
-        </ReactFlow>
+      {snapshot && (
+        <div className="dashboard-strip">
+          <div className="kpi-card">
+            <div className="muted">Активных проектов</div>
+            <div className="kpi-value">{snapshot.totals.active_projects_count}</div>
+          </div>
+          <div className="kpi-card">
+            <div className="muted">Получено</div>
+            <div className="kpi-value">{toMoney(snapshot.totals.received_total)}</div>
+          </div>
+          <div className="kpi-card">
+            <div className="muted">Ожидаем всего</div>
+            <div className="kpi-value">{toMoney(snapshot.totals.expected_total)}</div>
+          </div>
+          <div className="kpi-card">
+            <div className="muted">В кармане</div>
+            <div className="kpi-value accent">{toMoney(snapshot.totals.in_pocket_to_date)}</div>
+          </div>
+        </div>
+      )}
+
+      <div className="classic-layout">
+        <div className="panel">
+          <div className="grid">
+            {(snapshot?.projects || []).map((p) => {
+              const meta = metaById.get(p.project_id)
+              return (
+                <Link key={p.project_id} to={`/projects/${p.project_id}`} className="project-tile">
+                  <div className="project-tile-title">{p.title}</div>
+                  <div className="muted">Организация: {meta?.client_name || "—"}</div>
+                  <div className="muted">Получено: {toMoney(p.received_to_date)}</div>
+                  <div className="muted">Осталось: {toMoney(p.remaining)}</div>
+                </Link>
+              )
+            })}
+            {(snapshot?.projects || []).length === 0 && <div className="muted">На выбранный месяц активных проектов нет</div>}
+          </div>
+        </div>
+
+        <div className="panel">
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Проект</th>
+                  <th>Получено</th>
+                  <th>Ожидаем</th>
+                  <th>Осталось</th>
+                  <th>В кармане</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(snapshot?.projects || []).map((p) => (
+                  <tr key={p.project_id}>
+                    <td><Link to={`/projects/${p.project_id}`}>{p.title}</Link></td>
+                    <td>{toMoney(p.received_to_date)}</td>
+                    <td>{toMoney(p.expected_total)}</td>
+                    <td>{toMoney(p.remaining)}</td>
+                    <td>{toMoney(p.in_pocket_to_date)}</td>
+                  </tr>
+                ))}
+                {(snapshot?.projects || []).length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="muted">Нет данных</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
+
+      {error && (
+        <div className="panel">
+          <div className="muted" style={{ color: "#ff9a9a" }}>{error}</div>
+        </div>
+      )}
     </div>
+    {createOpen && (
+      <div
+        className="modal-backdrop"
+        onClick={() => {
+          if (!creating) {
+            setSearch((prev) => {
+              const next = new URLSearchParams(prev)
+              next.delete("create")
+              return next
+            })
+          }
+        }}
+      >
+        <form
+          className="panel project-settings-panel project-settings-modal"
+          onClick={(e) => e.stopPropagation()}
+          onSubmit={(e) => {
+            e.preventDefault()
+            void createProject()
+          }}
+        >
+          <div className="row" style={{ justifyContent: "space-between" }}>
+            <div className="h1">Добавить проект</div>
+            <button
+              type="button"
+              className="btn"
+              disabled={creating}
+              onClick={() => {
+                setSearch((prev) => {
+                  const next = new URLSearchParams(prev)
+                  next.delete("create")
+                  return next
+                })
+              }}
+            >
+              Закрыть
+            </button>
+          </div>
+
+          <div className="grid grid-2" style={{ marginTop: 10 }}>
+            <input
+              className="input"
+              placeholder="Название проекта"
+              value={form.title}
+              autoFocus
+              onChange={(e) => setForm((prev) => ({ ...prev, title: e.target.value }))}
+            />
+            <input
+              className="input"
+              placeholder="Организация"
+              value={form.client_name}
+              onChange={(e) => setForm((prev) => ({ ...prev, client_name: e.target.value }))}
+            />
+            <input
+              className="input"
+              placeholder="Email клиента"
+              value={form.client_email}
+              onChange={(e) => setForm((prev) => ({ ...prev, client_email: e.target.value }))}
+            />
+            <input
+              className="input"
+              placeholder="Телефон клиента"
+              value={form.client_phone}
+              onChange={(e) => setForm((prev) => ({ ...prev, client_phone: e.target.value }))}
+            />
+          </div>
+
+          <div className="row" style={{ marginTop: 10 }}>
+            <button type="submit" className="btn" disabled={creating}>Сохранить</button>
+          </div>
+        </form>
+      </div>
+    )}
+    </>
   )
 }

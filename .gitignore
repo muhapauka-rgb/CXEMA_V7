@@ -9,6 +9,9 @@ backend/.env
 # DB / runtime
 data/*.db
 .run/
+data/mock_sheets/
+data/google/token.json
+data/google/*.token.json
 
 # Node
 frontend/node_modules/
@@ -16,3 +19,6 @@ frontend/dist/
 
 # OS
 .DS_Store
+
+# TypeScript build cache
+frontend/*.tsbuildinfo

@@ -36,10 +36,13 @@ class Project(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     title: Mapped[str] = mapped_column(String(255))
     client_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    client_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    client_phone: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     project_price_total: Mapped[float] = mapped_column(Float, default=0.0)  # Стоимость проекта
     expected_from_client_total: Mapped[float] = mapped_column(Float, default=0.0)  # Ждём всего
     agency_fee_percent: Mapped[float] = mapped_column(Float, default=10.0)
+    agency_fee_include_in_estimate: Mapped[bool] = mapped_column(Boolean, default=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -83,6 +86,7 @@ class ExpenseItem(Base):
 
     extra_profit_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     extra_profit_amount: Mapped[float] = mapped_column(Float, default=0.0)
+    include_in_estimate: Mapped[bool] = mapped_column(Boolean, default=True)
 
     planned_pay_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
 

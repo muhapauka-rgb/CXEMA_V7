@@ -3,14 +3,38 @@ from __future__ import annotations
 from datetime import date
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from ..db import get_db
-from ..models import Project
-from ..schemas import OverviewSnapshot, SnapshotTotals, SnapshotProject
+from ..models import Project, ExpenseItem, ClientPaymentsPlan, ClientPaymentsFact
+from ..schemas import OverviewSnapshot, SnapshotTotals, SnapshotProject, OverviewMonthRange
 from ..utils import is_project_active, received_to_date, planned_to_date, compute_project_financials
 
 router = APIRouter(prefix="/api/overview", tags=["overview"])
+
+def _month_key(d: date) -> str:
+    return f"{d.year:04d}-{d.month:02d}"
+
+@router.get("/month-range", response_model=OverviewMonthRange)
+def month_range(db: Session = Depends(get_db)):
+    item_min, item_max = db.execute(
+        select(func.min(ExpenseItem.planned_pay_date), func.max(ExpenseItem.planned_pay_date))
+    ).one()
+    plan_min, plan_max = db.execute(
+        select(func.min(ClientPaymentsPlan.pay_date), func.max(ClientPaymentsPlan.pay_date))
+    ).one()
+    fact_min, fact_max = db.execute(
+        select(func.min(ClientPaymentsFact.pay_date), func.max(ClientPaymentsFact.pay_date))
+    ).one()
+
+    points = [d for d in [item_min, item_max, plan_min, plan_max, fact_min, fact_max] if d is not None]
+    if not points:
+        now = date.today()
+        return OverviewMonthRange(min_month=_month_key(now), max_month=_month_key(now))
+
+    min_point = min(points)
+    max_point = max(points)
+    return OverviewMonthRange(min_month=_month_key(min_point), max_month=_month_key(max_point))
 
 @router.get("/snapshot", response_model=OverviewSnapshot)
 def snapshot(at: date = Query(..., description="YYYY-MM-DD"), db: Session = Depends(get_db)):
@@ -30,14 +54,15 @@ def snapshot(at: date = Query(..., description="YYYY-MM-DD"), db: Session = Depe
 
     out_projects = []
     for p in active:
-        r = received_to_date(db, p.id, at)
+        r_fact = received_to_date(db, p.id, at)
         pl = planned_to_date(db, p.id, at)
+        r = r_fact + pl
         expected = float(p.expected_from_client_total)
 
         comp = compute_project_financials(db, p.id)
         # MVP: extra_profit_to_date = вся доп прибыль проекта (без датировки)
         ep = float(comp["extra_profit_total"])
-        agency = 0.10 * r
+        agency = (float(p.agency_fee_percent) / 100.0) * r
         in_pocket = agency + ep
 
         received_total += r
