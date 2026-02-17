@@ -26,7 +26,7 @@ type LifeResponse = {
 }
 
 function toMoney(v: number): string {
-  return Number(v || 0).toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return Number(v || 0).toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 0 })
 }
 
 function nextMonthKey(d: Date): string {
@@ -87,24 +87,7 @@ export default function LifePage() {
     <div className="grid">
       <div className="panel top-panel">
         <div className="row" style={{ justifyContent: "space-between" }}>
-          <div>
-            <div className="h1">Жизнь</div>
-            <div className="timeline-current-row" style={{ marginTop: 8 }}>
-              <button
-                className="timeline-current-month"
-                onClick={() => openNativePicker(monthPickerRef.current, true)}
-              >
-                {monthLabelRu(selectedMonth)}
-              </button>
-              <input
-                ref={monthPickerRef}
-                className="timeline-month-picker-hidden"
-                type="month"
-                value={selectedMonth}
-                onChange={(e) => setSelectedMonth(e.target.value)}
-              />
-            </div>
-          </div>
+          <div />
           <div className="row">
             <input
               className="input"
@@ -130,10 +113,23 @@ export default function LifePage() {
 
       {data && (
         <>
-          <div className="dashboard-strip">
+          <div className="dashboard-strip life-kpi-strip">
             <div className="kpi-card">
               <div className="muted">Период</div>
-              <div className="kpi-value">{data.period.label}</div>
+              <button
+                type="button"
+                className="kpi-value life-period-button"
+                onClick={() => openNativePicker(monthPickerRef.current, true)}
+              >
+                {monthLabelRu(selectedMonth)}
+              </button>
+              <input
+                ref={monthPickerRef}
+                className="timeline-month-picker-hidden"
+                type="month"
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(e.target.value)}
+              />
             </div>
             <div className="kpi-card">
               <div className="muted">Цель на жизнь</div>
@@ -151,8 +147,8 @@ export default function LifePage() {
 
           {data.life_gap > 0 && (
             <div className="panel">
-              <div className="muted" style={{ color: "#ffb0b0" }}>
-                Не хватает на жизнь за период: {toMoney(data.life_gap)}
+              <div style={{ color: "var(--text)" }}>
+                Не хватает до цели: {toMoney(data.life_gap)}
               </div>
             </div>
           )}
@@ -160,7 +156,7 @@ export default function LifePage() {
           <div className="panel">
             <div className="h1" style={{ marginBottom: 10 }}>Разбор по проектам</div>
             <div className="table-wrap">
-              <table className="table">
+              <table className="table life-table">
                 <thead>
                   <tr>
                     <th>Проект</th>

@@ -17,6 +17,7 @@ type GoogleAuthStart = {
 }
 
 const GOOGLE_LOGIN_KEY = "cxema_google_login"
+const GOOGLE_PASSWORD_KEY = "cxema_google_password"
 
 export default function SettingsPage() {
   const [googleLogin, setGoogleLogin] = useState("")
@@ -27,7 +28,9 @@ export default function SettingsPage() {
 
   useEffect(() => {
     const savedLogin = localStorage.getItem(GOOGLE_LOGIN_KEY) || ""
+    const savedPassword = localStorage.getItem(GOOGLE_PASSWORD_KEY) || ""
     setGoogleLogin(savedLogin)
+    setGooglePassword(savedPassword)
     void refreshStatus()
   }, [])
 
@@ -52,10 +55,10 @@ export default function SettingsPage() {
     }
   }
 
-  function saveLoginOnly() {
+  function saveGoogleCredentials() {
     localStorage.setItem(GOOGLE_LOGIN_KEY, googleLogin.trim())
-    setGooglePassword("")
-    setMsg("Логин сохранён локально в браузере. Пароль не хранится и не используется.")
+    localStorage.setItem(GOOGLE_PASSWORD_KEY, googlePassword)
+    setMsg("Логин и пароль сохранены локально в браузере.")
   }
 
   return (
@@ -80,12 +83,12 @@ export default function SettingsPage() {
           <input
             className="input"
             type="password"
-            placeholder="Google password (не используется)"
+            placeholder="Google password"
             value={googlePassword}
             onChange={(e) => setGooglePassword(e.target.value)}
           />
           <div className="row">
-            <button className="btn" onClick={saveLoginOnly}>Сохранить логин</button>
+            <button className="btn" onClick={saveGoogleCredentials}>Сохранить логин и пароль</button>
             <button className="btn" onClick={() => void refreshStatus()}>Проверить подключение</button>
             <button className="btn" onClick={() => void startOauth()}>Подключить Google (OAuth)</button>
           </div>

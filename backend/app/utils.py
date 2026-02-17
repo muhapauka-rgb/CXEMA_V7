@@ -28,9 +28,10 @@ def compute_project_financials(db: Session, project_id: int) -> dict:
     if not project:
         return {"project_id": project_id, "expenses_total": 0.0, "agency_fee": 0.0, "extra_profit_total": 0.0, "in_pocket": 0.0, "diff": 0.0}
 
-    agency_fee = float(project.project_price_total) * (float(project.agency_fee_percent) / 100.0)
+    project_total = float(project.project_price_total or 0.0)
+    agency_fee = project_total * (float(project.agency_fee_percent) / 100.0)
     in_pocket = agency_fee + extra_profit_total
-    diff = float(project.project_price_total) - expenses_total - in_pocket
+    diff = project_total - expenses_total - in_pocket
 
     return {
         "project_id": project_id,

@@ -9,6 +9,8 @@ class ProjectCreate(BaseModel):
     client_name: Optional[str] = None
     client_email: Optional[str] = None
     client_phone: Optional[str] = None
+    google_drive_url: Optional[str] = None
+    google_drive_folder: Optional[str] = None
     agency_fee_percent: float = Field(default=10.0, ge=0)
     agency_fee_include_in_estimate: bool = True
     project_price_total: float = 0.0
@@ -20,6 +22,8 @@ class ProjectUpdate(BaseModel):
     client_name: Optional[str] = None
     client_email: Optional[str] = None
     client_phone: Optional[str] = None
+    google_drive_url: Optional[str] = None
+    google_drive_folder: Optional[str] = None
     agency_fee_percent: Optional[float] = Field(default=None, ge=0)
     agency_fee_include_in_estimate: Optional[bool] = None
     project_price_total: Optional[float] = None
@@ -32,6 +36,8 @@ class ProjectOut(BaseModel):
     client_name: Optional[str]
     client_email: Optional[str]
     client_phone: Optional[str]
+    google_drive_url: Optional[str]
+    google_drive_folder: Optional[str]
     project_price_total: float
     expected_from_client_total: float
     agency_fee_percent: float

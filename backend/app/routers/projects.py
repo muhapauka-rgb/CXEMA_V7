@@ -53,6 +53,10 @@ def _ensure_sqlite_columns() -> None:
             conn.execute(text("ALTER TABLE projects ADD COLUMN client_email VARCHAR(255)"))
         if "client_phone" not in project_columns:
             conn.execute(text("ALTER TABLE projects ADD COLUMN client_phone VARCHAR(64)"))
+        if "google_drive_url" not in project_columns:
+            conn.execute(text("ALTER TABLE projects ADD COLUMN google_drive_url VARCHAR(1024)"))
+        if "google_drive_folder" not in project_columns:
+            conn.execute(text("ALTER TABLE projects ADD COLUMN google_drive_folder VARCHAR(255)"))
         if "agency_fee_percent" not in project_columns:
             conn.execute(text("ALTER TABLE projects ADD COLUMN agency_fee_percent FLOAT NOT NULL DEFAULT 10.0"))
         if "agency_fee_include_in_estimate" not in project_columns:
@@ -119,6 +123,8 @@ def create_project(payload: ProjectCreate, db: Session = Depends(get_db)):
         client_name=payload.client_name,
         client_email=payload.client_email,
         client_phone=payload.client_phone,
+        google_drive_url=payload.google_drive_url,
+        google_drive_folder=payload.google_drive_folder,
         agency_fee_percent=payload.agency_fee_percent,
         agency_fee_include_in_estimate=payload.agency_fee_include_in_estimate,
         project_price_total=payload.project_price_total,
@@ -194,6 +200,13 @@ def update_group(project_id: int, group_id: int, payload: GroupUpdate, db: Sessi
     db.commit()
     db.refresh(g)
     return g
+
+@router.delete("/{project_id}/groups/{group_id}")
+def delete_group(project_id: int, group_id: int, db: Session = Depends(get_db)):
+    g = _get_group_or_404(db, project_id, group_id)
+    db.delete(g)
+    db.commit()
+    return {"deleted": True}
 
 @router.get("/{project_id}/items", response_model=list[ItemOut])
 def list_items(project_id: int, db: Session = Depends(get_db)):

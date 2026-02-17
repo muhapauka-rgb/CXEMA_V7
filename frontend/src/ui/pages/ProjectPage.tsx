@@ -14,6 +14,8 @@ type Project = {
   client_name?: string | null
   client_email?: string | null
   client_phone?: string | null
+  google_drive_url?: string | null
+  google_drive_folder?: string | null
   agency_fee_percent: number
   agency_fee_include_in_estimate: boolean
   project_price_total: number
@@ -383,11 +385,15 @@ export default function ProjectPage() {
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [projectPriceDraft, setProjectPriceDraft] = useState("0")
+  const [savingProjectPrice, setSavingProjectPrice] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [settingsSaving, setSettingsSaving] = useState(false)
   const [settingsForm, setSettingsForm] = useState({
     title: "",
     client_name: "",
+    google_drive_url: "",
+    google_drive_folder: "",
     agency_fee_percent: "10",
     agency_fee_include_in_estimate: true,
     phones: [""],
@@ -396,12 +402,15 @@ export default function ProjectPage() {
   const [groupName, setGroupName] = useState("")
   const [isGroupCreateOpen, setIsGroupCreateOpen] = useState(false)
   const [creatingGroup, setCreatingGroup] = useState(false)
+  const [deletingGroupId, setDeletingGroupId] = useState<number | null>(null)
   const [editingGroupId, setEditingGroupId] = useState<number | null>(null)
   const [editingGroupName, setEditingGroupName] = useState("")
   const [savingGroupId, setSavingGroupId] = useState<number | null>(null)
   const [itemDrafts, setItemDrafts] = useState<Record<number, ItemSheetDraft>>({})
   const [creatingInGroup, setCreatingInGroup] = useState<number | null>(null)
   const [savingItemId, setSavingItemId] = useState<number | null>(null)
+  const [isCommonAgencyOpen, setIsCommonAgencyOpen] = useState(false)
+  const [groupAgencyEnabled, setGroupAgencyEnabled] = useState<Record<number, boolean>>({})
   const [newItemForm, setNewItemForm] = useState<ItemFormState>(emptyItemForm())
   const [editItemForm, setEditItemForm] = useState<ItemFormState>(emptyItemForm())
   const [adjustmentForm, setAdjustmentForm] = useState({
@@ -427,6 +436,19 @@ export default function ProjectPage() {
       ...factPayments.map((p) => ({ kind: "fact" as const, id: p.id, pay_date: p.pay_date, amount: p.amount, note: p.note || "" })),
     ]).sort((a, b) => a.pay_date.localeCompare(b.pay_date) || a.id - b.id),
     [planPayments, factPayments],
+  )
+  const paymentsTotal = useMemo(
+    () => paymentRows.reduce((acc, row) => acc + Number(row.amount || 0), 0),
+    [paymentRows],
+  )
+  const paymentsDiff = useMemo(
+    () => paymentsTotal - Number(project?.project_price_total || 0),
+    [paymentsTotal, project?.project_price_total],
+  )
+  const paymentsDiffIsAccent = Math.abs(paymentsDiff) >= 0.005
+  const groupAgencyStorageKey = useMemo(
+    () => `cxema-v7:project:${projectId}:group-agency`,
+    [projectId],
   )
 
   async function loadAll() {
@@ -455,10 +477,13 @@ export default function ProjectPage() {
       setSettingsForm({
         title: p.title,
         client_name: p.client_name || "",
+        google_drive_url: p.google_drive_url || "",
+        google_drive_folder: p.google_drive_folder || "",
         agency_fee_percent: formatNumberValueForInput(p.agency_fee_percent ?? 10),
         agency_fee_include_in_estimate: p.agency_fee_include_in_estimate ?? true,
         phones: parsePhones(p.client_phone),
       })
+      setProjectPriceDraft(formatNumberValueForInput(p.project_price_total || 0))
       setNewItemForm((prev) => ({ ...prev, group_id: prev.group_id || (gs[0] ? String(gs[0].id) : "") }))
       if (selectedItemId && !its.find((it) => it.id === selectedItemId)) {
         setSelectedItemId(null)
@@ -542,6 +567,8 @@ export default function ProjectPage() {
         title: nextTitle,
         client_name: settingsForm.client_name.trim() || null,
         client_phone: serializePhones(settingsForm.phones),
+        google_drive_url: settingsForm.google_drive_url.trim() || null,
+        google_drive_folder: settingsForm.google_drive_folder.trim() || null,
         agency_fee_percent: parseNonNegative(settingsForm.agency_fee_percent, "agency_fee_percent"),
         agency_fee_include_in_estimate: settingsForm.agency_fee_include_in_estimate,
       })
@@ -606,13 +633,34 @@ export default function ProjectPage() {
     }
   }
 
-  async function createItemInGroup(groupId: number) {
+  async function deleteGroup(group: Group) {
+    const groupItems = items.filter((it) => it.group_id === group.id)
+    const confirmed = window.confirm(
+      groupItems.length > 0
+        ? `Удалить группу "${group.name}" и все её позиции (${groupItems.length})?`
+        : `Удалить группу "${group.name}"?`,
+    )
+    if (!confirmed) return
+    try {
+      setError(null)
+      setDeletingGroupId(group.id)
+      await apiDelete(`/api/projects/${projectId}/groups/${group.id}`)
+      if (editingGroupId === group.id) cancelGroupRename()
+      await loadAll()
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setDeletingGroupId(null)
+    }
+  }
+
+  async function createItemInGroup(groupId: number, preset?: { title?: string }) {
     try {
       setError(null)
       setCreatingInGroup(groupId)
       const created = await apiPost<Item>(`/api/projects/${projectId}/items`, {
         group_id: groupId,
-        title: "",
+        title: preset?.title || "",
         mode: "SINGLE_TOTAL",
         qty: null,
         unit_price_base: null,
@@ -750,6 +798,27 @@ export default function ProjectPage() {
     }
   }
 
+  async function saveProjectPrice(raw?: string) {
+    if (!project) return
+    const source = raw ?? projectPriceDraft
+    try {
+      setError(null)
+      setSavingProjectPrice(true)
+      const next = parseNonNegative(source, "project_price_total") || 0
+      const updated = await apiPatch<Project>(`/api/projects/${projectId}`, {
+        project_price_total: next,
+      })
+      const c = await apiGet<Computed>(`/api/projects/${projectId}/computed`)
+      setProject(updated)
+      setComputed(c)
+      setProjectPriceDraft(formatNumberValueForInput(updated.project_price_total || 0))
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setSavingProjectPrice(false)
+    }
+  }
+
   async function persistPaymentRow(kind: "plan" | "fact", id: number, draft: PaymentDraft) {
     try {
       setError(null)
@@ -839,6 +908,48 @@ export default function ProjectPage() {
   }, [isSettingsOpen, settingsSaving])
 
   useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(groupAgencyStorageKey)
+      if (!raw) {
+        setGroupAgencyEnabled({})
+        return
+      }
+      const parsed = JSON.parse(raw) as Record<string, unknown>
+      const next: Record<number, boolean> = {}
+      Object.entries(parsed).forEach(([key, value]) => {
+        const idNum = Number(key)
+        if (Number.isFinite(idNum) && value === true) next[idNum] = true
+      })
+      setGroupAgencyEnabled(next)
+    } catch {
+      setGroupAgencyEnabled({})
+    }
+  }, [groupAgencyStorageKey])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(groupAgencyStorageKey, JSON.stringify(groupAgencyEnabled))
+    } catch {
+      // ignore storage write errors
+    }
+  }, [groupAgencyStorageKey, groupAgencyEnabled])
+
+  useEffect(() => {
+    if (!groups.length) return
+    const ids = new Set(groups.map((g) => g.id))
+    setGroupAgencyEnabled((prev) => {
+      const next: Record<number, boolean> = {}
+      Object.entries(prev).forEach(([key, value]) => {
+        const idNum = Number(key)
+        if (value && ids.has(idNum)) next[idNum] = true
+      })
+      const same = Object.keys(next).length === Object.keys(prev).length
+        && Object.keys(next).every((k) => prev[Number(k)] === true)
+      return same ? prev : next
+    })
+  }, [groups])
+
+  useEffect(() => {
     if (!editingGroupId) return
     if (groups.some((g) => g.id === editingGroupId)) return
     cancelGroupRename()
@@ -868,7 +979,25 @@ export default function ProjectPage() {
       <div className="dashboard-strip">
         <div className="kpi-card">
           <div className="muted">Стоимость проекта</div>
-          <div className="kpi-value">{toMoneyInt(project.project_price_total)}</div>
+          <input
+            className="kpi-value-input"
+            value={projectPriceDraft}
+            disabled={savingProjectPrice}
+            onFocus={(e) => handleZeroFocus(e.currentTarget)}
+            onChange={(e) => setProjectPriceDraft(e.target.value)}
+            onBlur={(e) => {
+              const next = normalizeNumberDraftInput(e.currentTarget.value)
+              setProjectPriceDraft(next)
+              void saveProjectPrice(next)
+            }}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") return
+              e.preventDefault()
+              const next = normalizeNumberDraftInput(e.currentTarget.value)
+              setProjectPriceDraft(next)
+              void saveProjectPrice(next)
+            }}
+          />
         </div>
         <div className="kpi-card">
           <div className="muted">Расходы</div>
@@ -888,7 +1017,7 @@ export default function ProjectPage() {
         </div>
         <div className="kpi-card">
           <div className="muted">Разница</div>
-          <div className={`kpi-value ${(computed?.diff || 0) === 0 ? "ok" : "bad"}`}>{toMoneyInt(computed?.diff || 0)}</div>
+          <div className="kpi-value diff-value">{toMoneyInt(computed?.diff || 0)}</div>
         </div>
       </div>
 
@@ -936,7 +1065,15 @@ export default function ProjectPage() {
 
           {groups.map((g) => {
             const gItems = items.filter((it) => it.group_id === g.id)
-            const total = gItems.reduce((acc, it) => acc + itemInternalTotal(it), 0)
+            const showExtraProfitColumns = gItems.some((it) => {
+              const draft = itemDrafts[it.id] || itemToSheetDraft(it)
+              return !!draft.extra_profit_enabled
+            })
+            const baseTotal = gItems.reduce((acc, it) => acc + itemInternalTotal(it), 0)
+            const agencyEnabled = !!groupAgencyEnabled[g.id]
+            const agencyPercent = Number(project.agency_fee_percent || 0)
+            const agencyAmount = agencyEnabled ? (baseTotal * agencyPercent) / 100 : 0
+            const total = baseTotal + agencyAmount
 
             return (
               <div key={g.id} className="sheet-group">
@@ -970,39 +1107,54 @@ export default function ProjectPage() {
                   <div className="row">
                     <span>{toMoney(total)}</span>
                     <button
+                      className="btn sheet-agency-btn"
+                      disabled={creatingInGroup === g.id || savingGroupId === g.id || agencyEnabled}
+                      onClick={() => setGroupAgencyEnabled((prev) => ({ ...prev, [g.id]: true }))}
+                    >
+                      Агентские
+                    </button>
+                    <button
                       className="btn sheet-plus-btn"
-                      disabled={creatingInGroup === g.id || savingGroupId === g.id}
+                      disabled={creatingInGroup === g.id || savingGroupId === g.id || deletingGroupId === g.id}
                       onClick={() => void createItemInGroup(g.id)}
                     >
                       +
                     </button>
+                    <button
+                      className="btn icon-btn"
+                      aria-label="Удалить группу"
+                      disabled={creatingInGroup === g.id || savingGroupId === g.id || deletingGroupId === g.id}
+                      onClick={() => void deleteGroup(g)}
+                    >
+                      <TrashIcon />
+                    </button>
                   </div>
                 </div>
 
-                {gItems.length > 0 && (
+                {(gItems.length > 0 || agencyEnabled) && (
                   <div className="table-wrap">
                     <table className="table expense-table">
                       <thead>
                         <tr>
-                          <th>Статья</th>
-                          <th>Дата<br />оплаты</th>
-                          <th>Шт</th>
-                          <th>Цена<br />за ед</th>
-                          <th>Сумма</th>
-                          <th>В<br />смету</th>
-                          <th>Доп<br />прибыль</th>
-                          <th>Сумма доп<br />прибыли</th>
-                          <th />
+                          <th className="col-title">Статья</th>
+                          <th className="col-date">Дата<br />оплаты</th>
+                          <th className="col-qty">Шт</th>
+                          <th className="col-unit">Цена<br />за ед</th>
+                          <th className="col-sum">Сумма</th>
+                          {showExtraProfitColumns && <th className="col-extra-amount">Доп<br />прибыль</th>}
+                          {showExtraProfitColumns && <th className="col-sum-extra">Сумма с доп<br />прибылью</th>}
+                          <th className="col-extra-toggle">Доп<br />прибыль</th>
+                          <th className="col-estimate">В<br />смету</th>
+                          <th className="col-actions" />
                         </tr>
                       </thead>
                       <tbody>
                         {gItems.map((it) => {
                           const draft = itemDrafts[it.id] || itemToSheetDraft(it)
                           const rowTotal = itemDraftTotal(draft)
-                          const hasExtra = draft.extra_profit_enabled && parseDraftNumber(draft.extra_profit_amount) > 0
                           return (
                             <tr key={it.id}>
-                              <td>
+                              <td className="col-title">
                                 <input
                                   className="input"
                                   value={draft.title}
@@ -1021,7 +1173,7 @@ export default function ProjectPage() {
                                   }}
                                 />
                               </td>
-                              <td>
+                              <td className="col-date">
                                 <div className="date-cell">
                                   <input
                                     className="input"
@@ -1061,7 +1213,7 @@ export default function ProjectPage() {
                                   />
                                 </div>
                               </td>
-                              <td>
+                              <td className="col-qty">
                                 <input
                                   className="input"
                                   value={draft.qty}
@@ -1095,7 +1247,7 @@ export default function ProjectPage() {
                                   }}
                                 />
                               </td>
-                              <td>
+                              <td className="col-unit">
                                 <input
                                   className="input"
                                   value={draft.unit_price_base}
@@ -1129,7 +1281,7 @@ export default function ProjectPage() {
                                   }}
                                 />
                               </td>
-                              <td>
+                              <td className="col-sum">
                                 <input
                                   className="input"
                                   value={draft.base_total}
@@ -1149,22 +1301,42 @@ export default function ProjectPage() {
                                     commitItemDraft(it, next)
                                   }}
                                 />
-                                {hasExtra && (
-                                  <div className="row-total-hint">Итог по строке: {toMoney(rowTotal)}</div>
-                                )}
                               </td>
-                              <td>
-                                <input
-                                  type="checkbox"
-                                  checked={draft.include_in_estimate}
-                                  onChange={(e) => {
-                                    const next = { ...draft, include_in_estimate: e.target.checked }
-                                    setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
-                                    void persistItemRow(it, next)
-                                  }}
-                                />
-                              </td>
-                              <td>
+                              {showExtraProfitColumns && (
+                                <td className="col-extra-amount">
+                                  {draft.extra_profit_enabled ? (
+                                    <input
+                                      className="input"
+                                      value={draft.extra_profit_amount}
+                                      onChange={(e) => setItemDrafts((prev) => ({ ...prev, [it.id]: { ...draft, extra_profit_amount: e.target.value } }))}
+                                      onFocus={(e) => handleZeroFocus(e.currentTarget)}
+                                      onBlur={(e) => {
+                                        const next = { ...draft, extra_profit_amount: normalizeNumberDraftInput(e.currentTarget.value) }
+                                        setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
+                                        void persistItemRow(it, next)
+                                      }}
+                                      onKeyDown={(e) => {
+                                        if (e.key !== "Enter") return
+                                        e.preventDefault()
+                                        const next = { ...draft, extra_profit_amount: normalizeNumberDraftInput(e.currentTarget.value) }
+                                        commitItemDraft(it, next)
+                                      }}
+                                    />
+                                  ) : (
+                                    <span className="muted">—</span>
+                                  )}
+                                </td>
+                              )}
+                              {showExtraProfitColumns && (
+                                <td className="col-sum-extra">
+                                  <input
+                                    className="input"
+                                    value={formatNumberValueForInput(rowTotal)}
+                                    readOnly
+                                  />
+                                </td>
+                              )}
+                              <td className="col-extra-toggle">
                                 <input
                                   type="checkbox"
                                   checked={draft.extra_profit_enabled}
@@ -1180,30 +1352,18 @@ export default function ProjectPage() {
                                   }}
                                 />
                               </td>
-                              <td>
-                                {draft.extra_profit_enabled ? (
-                                  <input
-                                    className="input"
-                                    value={draft.extra_profit_amount}
-                                    onChange={(e) => setItemDrafts((prev) => ({ ...prev, [it.id]: { ...draft, extra_profit_amount: e.target.value } }))}
-                                    onFocus={(e) => handleZeroFocus(e.currentTarget)}
-                                    onBlur={(e) => {
-                                      const next = { ...draft, extra_profit_amount: normalizeNumberDraftInput(e.currentTarget.value) }
-                                      setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
-                                      void persistItemRow(it, next)
-                                    }}
-                                    onKeyDown={(e) => {
-                                      if (e.key !== "Enter") return
-                                      e.preventDefault()
-                                      const next = { ...draft, extra_profit_amount: normalizeNumberDraftInput(e.currentTarget.value) }
-                                      commitItemDraft(it, next)
-                                    }}
-                                  />
-                                ) : (
-                                  <span className="muted">—</span>
-                                )}
+                              <td className="col-estimate">
+                                <input
+                                  type="checkbox"
+                                  checked={draft.include_in_estimate}
+                                  onChange={(e) => {
+                                    const next = { ...draft, include_in_estimate: e.target.checked }
+                                    setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
+                                    void persistItemRow(it, next)
+                                  }}
+                                />
                               </td>
-                              <td>
+                              <td className="col-actions">
                                 <button
                                   className="btn icon-btn"
                                   aria-label="Удалить строку"
@@ -1216,6 +1376,32 @@ export default function ProjectPage() {
                             </tr>
                           )
                         })}
+                        {agencyEnabled && (
+                          <tr className="group-agency-row">
+                            <td className="col-title">Агентские ({toPercentLabel(project.agency_fee_percent)}%)</td>
+                            <td className="col-date muted">авто</td>
+                            <td className="col-qty muted">—</td>
+                            <td className="col-unit muted">—</td>
+                            <td className="col-sum">{toMoney(agencyAmount)}</td>
+                            {showExtraProfitColumns && <td className="col-extra-amount muted">—</td>}
+                            {showExtraProfitColumns && <td className="col-sum-extra muted">—</td>}
+                            <td className="col-extra-toggle muted">—</td>
+                            <td className="col-estimate muted">—</td>
+                            <td className="col-actions">
+                              <button
+                                className="btn icon-btn"
+                                aria-label="Удалить агентские группы"
+                                onClick={() => setGroupAgencyEnabled((prev) => {
+                                  const next = { ...prev }
+                                  delete next[g.id]
+                                  return next
+                                })}
+                              >
+                                <TrashIcon />
+                              </button>
+                            </td>
+                          </tr>
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -1226,19 +1412,28 @@ export default function ProjectPage() {
 
           <div className="panel agency-line">
             <div className="agency-row">
-              <div>
-                <div className="h1">Агентские ({toPercentLabel(project.agency_fee_percent)}%)</div>
-              </div>
-              <div className="agency-amount">{toMoney(computed?.agency_fee || 0)}</div>
-              <label className="row agency-estimate-check">
-                <input
-                  type="checkbox"
-                  checked={project.agency_fee_include_in_estimate ?? true}
-                  disabled={settingsSaving}
-                  onChange={(e) => void setAgencyEstimateEnabled(e.target.checked)}
-                />
-                <span>В смету</span>
-              </label>
+              <div className="agency-title">Агентские ({toPercentLabel(project.agency_fee_percent)}%)</div>
+              {isCommonAgencyOpen && (
+                <div className="agency-amount">{toMoney(computed?.agency_fee || 0)}</div>
+              )}
+              {isCommonAgencyOpen && (
+                <label className="row agency-estimate-check">
+                  <input
+                    type="checkbox"
+                    checked={project.agency_fee_include_in_estimate ?? true}
+                    disabled={settingsSaving}
+                    onChange={(e) => void setAgencyEstimateEnabled(e.target.checked)}
+                  />
+                  <span>В смету</span>
+                </label>
+              )}
+              <button
+                className="btn sheet-plus-btn agency-add-btn"
+                aria-label={isCommonAgencyOpen ? "Убрать агентские на весь проект" : "Показать агентские на весь проект"}
+                onClick={() => setIsCommonAgencyOpen((prev) => !prev)}
+              >
+                {isCommonAgencyOpen ? "-" : "+"}
+              </button>
             </div>
           </div>
         </div>
@@ -1254,6 +1449,17 @@ export default function ProjectPage() {
             >
               +
             </button>
+            <div className="payments-summary-field">
+              <div className="muted">Сумма оплат</div>
+              <div className="payments-summary-value">{toMoneyInt(paymentsTotal)}</div>
+            </div>
+            <div className={`payments-summary-field ${paymentsDiffIsAccent ? "accent" : ""}`}>
+              <div className="muted">Разница</div>
+              <div className="payments-summary-value">
+                {paymentsDiff > 0 ? "+" : ""}
+                {toMoneyInt(paymentsDiff)}
+              </div>
+            </div>
           </div>
 
           {paymentRows.length > 0 && (
@@ -1532,6 +1738,26 @@ export default function ProjectPage() {
                 value={settingsForm.client_name}
                 onChange={(e) => setSettingsForm((prev) => ({ ...prev, client_name: e.target.value }))}
                 placeholder="Название фирмы"
+              />
+            </label>
+
+            <label className="settings-field">
+              <span className="settings-label">Google Drive URL</span>
+              <input
+                className="input"
+                value={settingsForm.google_drive_url}
+                onChange={(e) => setSettingsForm((prev) => ({ ...prev, google_drive_url: e.target.value }))}
+                placeholder="https://drive.google.com/..."
+              />
+            </label>
+
+            <label className="settings-field">
+              <span className="settings-label">Папка сметы (ID / имя)</span>
+              <input
+                className="input"
+                value={settingsForm.google_drive_folder}
+                onChange={(e) => setSettingsForm((prev) => ({ ...prev, google_drive_folder: e.target.value }))}
+                placeholder="ID папки или название"
               />
             </label>
 

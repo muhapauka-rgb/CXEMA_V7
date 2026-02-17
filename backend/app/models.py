@@ -38,6 +38,8 @@ class Project(Base):
     client_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     client_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     client_phone: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    google_drive_url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    google_drive_folder: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     project_price_total: Mapped[float] = mapped_column(Float, default=0.0)  # Стоимость проекта
     expected_from_client_total: Mapped[float] = mapped_column(Float, default=0.0)  # Ждём всего

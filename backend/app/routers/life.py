@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
@@ -134,7 +135,7 @@ def previous_month_life(
 @router.get("/month", response_model=LifePreviousMonthOut)
 def month_life(
     target_amount: float = Query(100000.0, ge=0),
-    month: str | None = Query(default=None, description="YYYY-MM"),
+    month: Optional[str] = Query(default=None, description="YYYY-MM"),
     db: Session = Depends(get_db),
 ):
     if month:

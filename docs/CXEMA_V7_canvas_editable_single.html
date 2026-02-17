@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CXEMA V7 — Detailed Canvas Blueprint</title>
+  <title>CXEMA V7 — Canvas Editable</title>
   <style>
     :root {
       --bg: #050910;
@@ -185,6 +185,8 @@
       vertical-align: top;
     }
 
+    td { border-bottom: none; }
+
     tr:last-child td { border-bottom: none; }
 
     .cards-and-table {
@@ -248,8 +250,8 @@
 
     .payments-box {
       width: min(560px, 100%);
-      border: 1px solid var(--line);
-      border-radius: var(--radius);
+      border: none;
+      border-radius: 0;
       padding: 10px;
     }
 
@@ -290,14 +292,6 @@
       background: var(--panel-soft);
     }
 
-    .hint {
-      border: 1px dashed var(--line);
-      border-radius: 10px;
-      padding: 8px;
-      color: var(--muted);
-      font-size: 12px;
-    }
-
     @media (max-width: 1320px) {
       .cards-and-table { grid-template-columns: 1fr; }
       .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -328,8 +322,11 @@
         <section class="scene active" id="scene-overview">
           <div class="panel">
             <div class="row" style="justify-content: space-between;">
-              <h2 class="h1">Итоги</h2>
-              <button class="btn">Обновить</button>
+              <div></div>
+              <div class="row">
+                <button class="btn">⟳</button>
+                <button class="btn" data-open="project-settings">⚙</button>
+              </div>
             </div>
             <button class="timeline-title" data-month-open="overview-month">февраль 2026</button>
             <input id="overview-month" class="month-hidden" type="month" value="2026-02" />
@@ -504,9 +501,6 @@
                 <input class="input" data-type="amount" value="2 500 000" />
                 <button class="btn">🗑</button>
               </div>
-              <div class="hint" style="margin-top: 8px;">
-                Правило: дата в прошлом = факт, дата в будущем = план.
-              </div>
             </div>
           </div>
 
@@ -524,11 +518,7 @@
         <section class="scene" id="scene-life">
           <div class="panel">
             <div class="row" style="justify-content: space-between;">
-              <div>
-                <h2 class="h1">Жизнь</h2>
-                <button class="timeline-title" data-month-open="life-month" style="font-size: 26px;">март 2026</button>
-                <input id="life-month" class="month-hidden" type="month" value="2026-03" />
-              </div>
+              <div></div>
               <div class="row">
                 <input class="input" style="width: 170px;" value="100 000" />
                 <button class="btn">Пересчитать</button>
@@ -537,10 +527,14 @@
           </div>
 
           <div class="kpis" style="grid-template-columns: repeat(4, minmax(0, 1fr));">
-            <div class="kpi"><div class="muted">Период</div><div class="v">03.2026</div></div>
+            <div class="kpi"><div class="muted">Период</div><button class="timeline-title" data-month-open="life-month" style="margin: 5px 0 0; font-size: 30px;">март 2026</button><input id="life-month" class="month-hidden" type="month" value="2026-03" /></div>
             <div class="kpi"><div class="muted">Цель на жизнь</div><div class="v">100 000</div></div>
             <div class="kpi"><div class="muted">Покрыто</div><div class="v ok">100 000</div></div>
             <div class="kpi"><div class="muted">В копилку</div><div class="v accent">50 000</div></div>
+          </div>
+
+          <div class="panel">
+            <div style="color: var(--text);">Не хватает до цели: 100 000</div>
           </div>
 
           <div class="panel">
