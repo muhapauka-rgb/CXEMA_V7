@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import select, text
@@ -319,8 +321,12 @@ def delete_item_adjustment(project_id: int, item_id: int, db: Session = Depends(
 @router.get("/{project_id}/payments/plan", response_model=list[PaymentPlanOut])
 def list_payments_plan(project_id: int, db: Session = Depends(get_db)):
     _get_project_or_404(db, project_id)
+    today = date.today()
     return db.execute(
-        select(ClientPaymentsPlan).where(ClientPaymentsPlan.project_id == project_id).order_by(ClientPaymentsPlan.pay_date.asc(), ClientPaymentsPlan.id.asc())
+        select(ClientPaymentsPlan).where(
+            ClientPaymentsPlan.project_id == project_id,
+            ClientPaymentsPlan.pay_date > today,
+        ).order_by(ClientPaymentsPlan.pay_date.asc(), ClientPaymentsPlan.id.asc())
     ).scalars().all()
 
 @router.post("/{project_id}/payments/plan", response_model=PaymentPlanOut)
@@ -363,9 +369,39 @@ def delete_payment_plan(project_id: int, pay_id: int, db: Session = Depends(get_
 @router.get("/{project_id}/payments/fact", response_model=list[PaymentFactOut])
 def list_payments_fact(project_id: int, db: Session = Depends(get_db)):
     _get_project_or_404(db, project_id)
-    return db.execute(
+    today = date.today()
+    facts = db.execute(
         select(ClientPaymentsFact).where(ClientPaymentsFact.project_id == project_id).order_by(ClientPaymentsFact.pay_date.asc(), ClientPaymentsFact.id.asc())
     ).scalars().all()
+    due_plans = db.execute(
+        select(ClientPaymentsPlan).where(
+            ClientPaymentsPlan.project_id == project_id,
+            ClientPaymentsPlan.pay_date <= today,
+        ).order_by(ClientPaymentsPlan.pay_date.asc(), ClientPaymentsPlan.id.asc())
+    ).scalars().all()
+
+    rows: list[dict] = [
+        {
+            "id": int(f.id),
+            "project_id": int(f.project_id),
+            "pay_date": f.pay_date,
+            "amount": float(f.amount),
+            "note": f.note,
+        }
+        for f in facts
+    ]
+    rows.extend([
+        {
+            "id": -int(p.id),
+            "project_id": int(p.project_id),
+            "pay_date": p.pay_date,
+            "amount": float(p.amount),
+            "note": p.note,
+        }
+        for p in due_plans
+    ])
+    rows.sort(key=lambda r: (r["pay_date"], r["id"]))
+    return rows
 
 @router.post("/{project_id}/payments/fact", response_model=PaymentFactOut)
 def create_payment_fact(project_id: int, payload: PaymentFactCreate, db: Session = Depends(get_db)):
@@ -384,6 +420,23 @@ def create_payment_fact(project_id: int, payload: PaymentFactCreate, db: Session
 @router.patch("/{project_id}/payments/fact/{fact_id}", response_model=PaymentFactOut)
 def update_payment_fact(project_id: int, fact_id: int, payload: PaymentFactUpdate, db: Session = Depends(get_db)):
     _get_project_or_404(db, project_id)
+    if fact_id < 0:
+        plan_id = -fact_id
+        rec_plan = db.get(ClientPaymentsPlan, plan_id)
+        if not rec_plan or rec_plan.project_id != project_id:
+            raise HTTPException(404, "PAYMENT_FACT_NOT_FOUND")
+        for k, v in payload.model_dump(exclude_unset=True).items():
+            setattr(rec_plan, k, v)
+        db.commit()
+        db.refresh(rec_plan)
+        return {
+            "id": -int(rec_plan.id),
+            "project_id": int(rec_plan.project_id),
+            "pay_date": rec_plan.pay_date,
+            "amount": float(rec_plan.amount),
+            "note": rec_plan.note,
+        }
+
     rec = db.get(ClientPaymentsFact, fact_id)
     if not rec or rec.project_id != project_id:
         raise HTTPException(404, "PAYMENT_FACT_NOT_FOUND")
@@ -396,6 +449,15 @@ def update_payment_fact(project_id: int, fact_id: int, payload: PaymentFactUpdat
 @router.delete("/{project_id}/payments/fact/{fact_id}")
 def delete_payment_fact(project_id: int, fact_id: int, db: Session = Depends(get_db)):
     _get_project_or_404(db, project_id)
+    if fact_id < 0:
+        plan_id = -fact_id
+        rec_plan = db.get(ClientPaymentsPlan, plan_id)
+        if not rec_plan or rec_plan.project_id != project_id:
+            raise HTTPException(404, "PAYMENT_FACT_NOT_FOUND")
+        db.delete(rec_plan)
+        db.commit()
+        return {"deleted": True}
+
     rec = db.get(ClientPaymentsFact, fact_id)
     if not rec or rec.project_id != project_id:
         raise HTTPException(404, "PAYMENT_FACT_NOT_FOUND")

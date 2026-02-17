@@ -103,10 +103,8 @@ function buildMonthRange(start: Date, end: Date): string[] {
 }
 
 function snapshotAtFromMonth(selected: string): string {
-  const today = new Date()
   const m = parseMonthKey(selected)
-  const monthEnd = new Date(m.getFullYear(), m.getMonth() + 1, 0)
-  const at = monthEnd > today ? today : monthEnd
+  const at = new Date(m.getFullYear(), m.getMonth() + 1, 0)
   const z = (n: number) => String(n).padStart(2, "0")
   return `${at.getFullYear()}-${z(at.getMonth() + 1)}-${z(at.getDate())}`
 }
@@ -336,6 +334,15 @@ export default function OverviewPage() {
         <div className="panel">
           <div className="table-wrap">
             <table className="table overview-table">
+              <colgroup>
+                <col style={{ width: "220px" }} />
+                <col style={{ width: "120px" }} />
+                <col style={{ width: "120px" }} />
+                <col style={{ width: "120px" }} />
+                <col style={{ width: "120px" }} />
+                <col style={{ width: "140px" }} />
+                <col style={{ width: "120px" }} />
+              </colgroup>
               <thead>
                 <tr>
                   <th>Проект</th>

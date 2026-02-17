@@ -25,6 +25,8 @@ type LifeResponse = {
   projects: LifeProject[]
 }
 
+const LIFE_TARGET_STORAGE_KEY = "cxema-v7:life-target"
+
 function toMoney(v: number): string {
   return Number(v || 0).toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 0 })
 }
@@ -51,7 +53,16 @@ function monthLabelRu(key: string): string {
 }
 
 export default function LifePage() {
-  const [targetRaw, setTargetRaw] = useState("100 000")
+  const [targetRaw, setTargetRaw] = useState(() => {
+    try {
+      const saved = window.localStorage.getItem(LIFE_TARGET_STORAGE_KEY)
+      if (!saved) return "100 000"
+      const formatted = formatNumberForInput(saved)
+      return formatted || "100 000"
+    } catch {
+      return "100 000"
+    }
+  })
   const [selectedMonth, setSelectedMonth] = useState(nextMonthKey(new Date()))
   const [data, setData] = useState<LifeResponse | null>(null)
   const [loading, setLoading] = useState(false)
@@ -77,6 +88,23 @@ export default function LifePage() {
     }
   }
 
+  function commitTarget(raw: string) {
+    const formatted = formatNumberForInput(raw)
+    const next = formatted || "0"
+    const parsed = parseInputNumber(next)
+    if (parsed == null || parsed < 0) {
+      setError("Сумма на жизнь должна быть неотрицательным числом")
+      return
+    }
+    setTargetRaw(next)
+    try {
+      window.localStorage.setItem(LIFE_TARGET_STORAGE_KEY, next)
+    } catch {
+      // ignore storage errors
+    }
+    void load(next, selectedMonth)
+  }
+
   useEffect(() => {
     setError(null)
     void load(undefined, selectedMonth).catch((e) => setError(String(e)))
@@ -85,32 +113,6 @@ export default function LifePage() {
 
   return (
     <div className="grid">
-      <div className="panel top-panel">
-        <div className="row" style={{ justifyContent: "space-between" }}>
-          <div />
-          <div className="row">
-            <input
-              className="input"
-              style={{ width: 170 }}
-              value={targetRaw}
-              onChange={(e) => setTargetRaw(e.target.value)}
-              onBlur={(e) => setTargetRaw(formatNumberForInput(e.currentTarget.value))}
-              onKeyDown={(e) => {
-                if (e.key !== "Enter") return
-                e.preventDefault()
-                const next = formatNumberForInput(e.currentTarget.value)
-                setTargetRaw(next)
-                void load(next, selectedMonth)
-              }}
-              placeholder="Сумма на жизнь"
-            />
-            <button className="btn" disabled={loading} onClick={() => void load()}>
-              Пересчитать
-            </button>
-          </div>
-        </div>
-      </div>
-
       {data && (
         <>
           <div className="dashboard-strip life-kpi-strip">
@@ -132,8 +134,19 @@ export default function LifePage() {
               />
             </div>
             <div className="kpi-card">
-              <div className="muted">Цель на жизнь</div>
-              <div className="kpi-value">{toMoney(data.target_amount)}</div>
+              <div className="muted">Цель на месяц</div>
+              <input
+                className="kpi-value-input"
+                value={targetRaw}
+                onChange={(e) => setTargetRaw(e.target.value)}
+                onBlur={(e) => commitTarget(e.currentTarget.value)}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return
+                  e.preventDefault()
+                  commitTarget(e.currentTarget.value)
+                }}
+                aria-label="Цель на месяц"
+              />
             </div>
             <div className="kpi-card">
               <div className="muted">Покрыто</div>

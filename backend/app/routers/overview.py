@@ -8,7 +8,13 @@ from sqlalchemy import select, func
 from ..db import get_db
 from ..models import Project, ExpenseItem, ClientPaymentsPlan, ClientPaymentsFact
 from ..schemas import OverviewSnapshot, SnapshotTotals, SnapshotProject, OverviewMonthRange
-from ..utils import is_project_active, received_to_date, planned_to_date, compute_project_financials
+from ..utils import (
+    is_project_active,
+    received_to_date,
+    planned_to_date,
+    project_pocket_monthly_components,
+    expense_breakdown_to_date,
+)
 
 router = APIRouter(prefix="/api/overview", tags=["overview"])
 
@@ -59,10 +65,11 @@ def snapshot(at: date = Query(..., description="YYYY-MM-DD"), db: Session = Depe
         r = received_to_date(db, p.id, at)
         pl = planned_to_date(db, p.id, at)
         expected = float(p.expected_from_client_total)
-        comp = compute_project_financials(db, p.id)
-        spent = float(comp["expenses_total"])
-        ep = float(comp["extra_profit_total"])
-        agency = (float(p.agency_fee_percent) / 100.0) * r
+        spent_base, _ = expense_breakdown_to_date(db, p.id, at)
+        spent = float(spent_base)
+        pocket_monthly = project_pocket_monthly_components(db, p, at)
+        agency = sum(float(v.get("agency", 0.0)) for v in pocket_monthly.values())
+        ep = sum(float(v.get("extra", 0.0)) for v in pocket_monthly.values())
         in_pocket = agency + ep
         balance = r - spent
 

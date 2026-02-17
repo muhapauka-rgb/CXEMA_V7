@@ -43,6 +43,7 @@ html[data-theme="light"] {
 
   --tile-a: rgba(11, 18, 32, 0.065);
   --tile-b: rgba(11, 18, 32, 0.05);
+  --ok: rgba(11, 18, 32, 0.92);
 }
 
 *,
@@ -572,6 +573,26 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 .overview-table th:nth-child(n + 2),
 .overview-table td:nth-child(n + 2) {
   text-align: right;
+}
+
+.overview-table {
+  table-layout: fixed;
+}
+
+.overview-table th,
+.overview-table td {
+  white-space: nowrap;
+}
+
+.overview-table th:first-child,
+.overview-table td:first-child {
+  text-align: left;
+}
+
+.overview-table td:first-child a {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .life-table th:nth-child(n + 3),

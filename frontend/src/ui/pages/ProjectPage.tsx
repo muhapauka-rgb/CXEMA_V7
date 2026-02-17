@@ -437,15 +437,68 @@ export default function ProjectPage() {
     ]).sort((a, b) => a.pay_date.localeCompare(b.pay_date) || a.id - b.id),
     [planPayments, factPayments],
   )
+  const itemMathById = useMemo(() => {
+    const out: Record<number, { base: number; extra: number; total: number }> = {}
+    for (const it of items) {
+      const draft = itemDrafts[it.id] || itemToSheetDraft(it)
+      let base = parseDraftNumber(draft.base_total)
+      if (draft.qty.trim() !== "") {
+        const qty = parseInputNumber(draft.qty)
+        const unit = parseInputNumber(draft.unit_price_base)
+        if (qty != null && qty >= 0 && unit != null && unit >= 0) {
+          base = qty === 0 ? unit : qty * unit
+        }
+      }
+      const extra = draft.extra_profit_enabled ? parseDraftNumber(draft.extra_profit_amount) : 0
+      out[it.id] = { base, extra, total: base + extra }
+    }
+    return out
+  }, [items, itemDrafts])
+  const projectPriceDisplayValue = useMemo(() => {
+    const parsed = parseInputNumber(projectPriceDraft)
+    if (parsed == null || parsed < 0) return Number(project?.project_price_total || 0)
+    return parsed
+  }, [projectPriceDraft, project?.project_price_total])
+  const expensesDisplay = useMemo(
+    () => items.reduce((acc, it) => acc + (itemMathById[it.id]?.total ?? itemInternalTotal(it)), 0),
+    [items, itemMathById],
+  )
+  const extraProfitDisplay = useMemo(
+    () => items.reduce((acc, it) => acc + (itemMathById[it.id]?.extra ?? (it.extra_profit_enabled ? Number(it.extra_profit_amount || 0) : 0)), 0),
+    [items, itemMathById],
+  )
   const paymentsTotal = useMemo(
-    () => paymentRows.reduce((acc, row) => acc + Number(row.amount || 0), 0),
-    [paymentRows],
+    () => paymentRows.reduce((acc, row) => {
+      const draft = row.kind === "plan" ? planDrafts[row.id] : factDrafts[row.id]
+      const parsed = parseInputNumber(draft?.amount ?? "")
+      if (parsed != null && parsed >= 0) return acc + parsed
+      return acc + Number(row.amount || 0)
+    }, 0),
+    [paymentRows, planDrafts, factDrafts],
   )
   const paymentsDiff = useMemo(
-    () => paymentsTotal - Number(project?.project_price_total || 0),
-    [paymentsTotal, project?.project_price_total],
+    () => paymentsTotal - projectPriceDisplayValue,
+    [paymentsTotal, projectPriceDisplayValue],
   )
   const paymentsDiffIsAccent = Math.abs(paymentsDiff) >= 0.005
+  const agencyPercent = Number(project?.agency_fee_percent || 0)
+  const groupAgencyTotal = useMemo(
+    () => groups.reduce((acc, g) => {
+      if (!groupAgencyEnabled[g.id]) return acc
+      const groupTotal = items
+        .filter((it) => it.group_id === g.id)
+        .reduce((sum, it) => sum + (itemMathById[it.id]?.total ?? itemInternalTotal(it)), 0)
+      return acc + (groupTotal * agencyPercent) / 100
+    }, 0),
+    [groups, items, groupAgencyEnabled, agencyPercent, itemMathById],
+  )
+  const commonAgencyAmount = useMemo(
+    () => (isCommonAgencyOpen ? projectPriceDisplayValue * (agencyPercent / 100) : 0),
+    [isCommonAgencyOpen, projectPriceDisplayValue, agencyPercent],
+  )
+  const agencyTotalFromExpenses = groupAgencyTotal + commonAgencyAmount
+  const inPocketDisplay = agencyTotalFromExpenses + extraProfitDisplay
+  const diffDisplay = projectPriceDisplayValue - expensesDisplay
   const groupAgencyStorageKey = useMemo(
     () => `cxema-v7:project:${projectId}:group-agency`,
     [projectId],
@@ -1001,23 +1054,23 @@ export default function ProjectPage() {
         </div>
         <div className="kpi-card">
           <div className="muted">Расходы</div>
-          <div className="kpi-value">{toMoneyInt(computed?.expenses_total || 0)}</div>
+          <div className="kpi-value">{toMoneyInt(expensesDisplay)}</div>
         </div>
         <div className="kpi-card">
           <div className="muted">Агентские ({toPercentLabel(project.agency_fee_percent)}%)</div>
-          <div className="kpi-value">{toMoneyInt(computed?.agency_fee || 0)}</div>
+          <div className="kpi-value">{toMoneyInt(agencyTotalFromExpenses)}</div>
         </div>
         <div className="kpi-card">
           <div className="muted">Доп прибыль</div>
-          <div className="kpi-value">{toMoneyInt(computed?.extra_profit_total || 0)}</div>
+          <div className="kpi-value">{toMoneyInt(extraProfitDisplay)}</div>
         </div>
         <div className="kpi-card">
           <div className="muted">В кармане</div>
-          <div className="kpi-value">{toMoneyInt(computed?.in_pocket || 0)}</div>
+          <div className="kpi-value">{toMoneyInt(inPocketDisplay)}</div>
         </div>
         <div className="kpi-card">
           <div className="muted">Разница</div>
-          <div className="kpi-value diff-value">{toMoneyInt(computed?.diff || 0)}</div>
+          <div className="kpi-value diff-value">{toMoneyInt(diffDisplay)}</div>
         </div>
       </div>
 
@@ -1069,7 +1122,7 @@ export default function ProjectPage() {
               const draft = itemDrafts[it.id] || itemToSheetDraft(it)
               return !!draft.extra_profit_enabled
             })
-            const baseTotal = gItems.reduce((acc, it) => acc + itemInternalTotal(it), 0)
+            const baseTotal = gItems.reduce((acc, it) => acc + (itemMathById[it.id]?.total ?? itemInternalTotal(it)), 0)
             const agencyEnabled = !!groupAgencyEnabled[g.id]
             const agencyPercent = Number(project.agency_fee_percent || 0)
             const agencyAmount = agencyEnabled ? (baseTotal * agencyPercent) / 100 : 0
@@ -1414,7 +1467,7 @@ export default function ProjectPage() {
             <div className="agency-row">
               <div className="agency-title">Агентские ({toPercentLabel(project.agency_fee_percent)}%)</div>
               {isCommonAgencyOpen && (
-                <div className="agency-amount">{toMoney(computed?.agency_fee || 0)}</div>
+                <div className="agency-amount">{toMoney(commonAgencyAmount)}</div>
               )}
               {isCommonAgencyOpen && (
                 <label className="row agency-estimate-check">
