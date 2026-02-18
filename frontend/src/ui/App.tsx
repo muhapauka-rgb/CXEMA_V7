@@ -4,8 +4,31 @@ import OverviewPage from './pages/OverviewPage'
 import ProjectPage from './pages/ProjectPage'
 import SettingsPage from './pages/SettingsPage'
 import LifePage from './pages/LifePage'
+import { apiGet } from './api'
 
 type ThemeMode = "dark" | "light"
+
+type DiscountEntry = {
+  project_id: number
+  project_title: string
+  organization?: string | null
+  item_id: number
+  item_title: string
+  item_date?: string | null
+  discount_amount: number
+}
+
+type DiscountCounterparty = {
+  organization: string
+  discount_total: number
+}
+
+type DiscountSummary = {
+  as_of: string
+  total_discount: number
+  entries: DiscountEntry[]
+  counterparties: DiscountCounterparty[]
+}
 
 const THEME_STORAGE_KEY = "cxema_theme"
 const ACCENT_STORAGE_KEY = "cxema_accent"
@@ -67,6 +90,13 @@ function CxemaWordmark() {
   )
 }
 
+function fmtSignedInt(value: number): string {
+  const num = Number(value || 0)
+  if (!Number.isFinite(num) || num === 0) return "0"
+  const abs = Math.abs(num).toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+  return num > 0 ? `+${abs}` : `-${abs}`
+}
+
 export default function App() {
   const navClass = ({ isActive }: { isActive: boolean }) => `btn nav-link${isActive ? " active" : ""}`
   const [theme, setTheme] = useState<ThemeMode>(() => {
@@ -81,6 +111,11 @@ export default function App() {
   })
   const [isAccentOpen, setIsAccentOpen] = useState(false)
   const [accentInput, setAccentInput] = useState(accent)
+  const [isDiscountsOpen, setIsDiscountsOpen] = useState(false)
+  const [discountsAsOf, setDiscountsAsOf] = useState(() => new Date().toISOString().slice(0, 10))
+  const [discountsData, setDiscountsData] = useState<DiscountSummary | null>(null)
+  const [discountsLoading, setDiscountsLoading] = useState(false)
+  const [discountsError, setDiscountsError] = useState<string | null>(null)
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme)
@@ -94,13 +129,29 @@ export default function App() {
   }, [accent])
 
   useEffect(() => {
-    if (!isAccentOpen) return
+    if (!isAccentOpen && !isDiscountsOpen) return
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setIsAccentOpen(false)
+      if (e.key === "Escape") {
+        setIsAccentOpen(false)
+        setIsDiscountsOpen(false)
+      }
     }
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
-  }, [isAccentOpen])
+  }, [isAccentOpen, isDiscountsOpen])
+
+  async function loadDiscounts(asOf = discountsAsOf) {
+    try {
+      setDiscountsError(null)
+      setDiscountsLoading(true)
+      const out = await apiGet<DiscountSummary>(`/api/discounts/summary?as_of=${encodeURIComponent(asOf)}`)
+      setDiscountsData(out)
+    } catch (e) {
+      setDiscountsError(String(e))
+    } finally {
+      setDiscountsLoading(false)
+    }
+  }
 
   function toggleTheme() {
     setTheme((prev) => (prev === "light" ? "dark" : "light"))
@@ -114,12 +165,22 @@ export default function App() {
 
   return (
     <>
-      <div className={isAccentOpen ? "page-content-muted" : ""}>
+      <div className={isAccentOpen || isDiscountsOpen ? "page-content-muted" : ""}>
         <div className="nav">
           <div className="brand"><CxemaWordmark /> <span className="v7">V7</span></div>
           <NavLink to="/" className={navClass}>Проекты</NavLink>
           <NavLink to="/life" className={navClass}>Жизнь</NavLink>
           <Link to="/?create=1" className="btn cta nav-add">+ Проект</Link>
+          <button
+            className="btn"
+            onClick={() => {
+              setIsAccentOpen(false)
+              setIsDiscountsOpen(true)
+              void loadDiscounts(discountsAsOf)
+            }}
+          >
+            Скидки
+          </button>
           <button className="btn icon-btn icon-stroke" onClick={toggleTheme} aria-label="Тема" title="Тема">
             <ThemeIcon theme={theme} />
           </button>
@@ -167,6 +228,116 @@ export default function App() {
               />
               <button className="btn" onClick={() => setAccent(DEFAULT_ACCENT)}>Сброс</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {isDiscountsOpen && (
+        <div
+          className="modal-backdrop"
+          onClick={() => setIsDiscountsOpen(false)}
+        >
+          <div className="panel project-settings-panel project-settings-modal discounts-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <div className="h1">Скидки</div>
+              <button className="btn" onClick={() => setIsDiscountsOpen(false)}>Закрыть</button>
+            </div>
+
+            <div className="row" style={{ marginTop: 10 }}>
+              <label className="settings-field" style={{ maxWidth: 180 }}>
+                <span className="settings-label">Дата среза</span>
+                <input
+                  className="input"
+                  type="date"
+                  value={discountsAsOf}
+                  onChange={(e) => setDiscountsAsOf(e.target.value)}
+                />
+              </label>
+              <button className="btn" onClick={() => void loadDiscounts(discountsAsOf)}>Обновить</button>
+            </div>
+
+            {discountsLoading && <div className="muted">Загрузка…</div>}
+            {discountsError && <div className="muted bad">{discountsError}</div>}
+
+            {discountsData && !discountsLoading && (
+              <div className="grid" style={{ marginTop: 4 }}>
+                <div className="dashboard-strip discounts-kpi-strip">
+                  <div className="kpi-card">
+                    <div className="muted">Итого скидок</div>
+                    <div className={`kpi-value ${discountsData.total_discount > 0 ? "accent" : discountsData.total_discount < 0 ? "ok" : ""}`}>
+                      {fmtSignedInt(discountsData.total_discount)}
+                    </div>
+                  </div>
+                  <div className="kpi-card">
+                    <div className="muted">Контрагентов</div>
+                    <div className="kpi-value">{discountsData.counterparties.length}</div>
+                  </div>
+                  <div className="kpi-card">
+                    <div className="muted">Позиции</div>
+                    <div className="kpi-value">{discountsData.entries.length}</div>
+                  </div>
+                </div>
+
+                <div className="table-wrap">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Организация</th>
+                        <th>Сальдо скидок</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {discountsData.counterparties.map((row) => (
+                        <tr key={row.organization}>
+                          <td>{row.organization}</td>
+                          <td className={row.discount_total > 0 ? "accent" : row.discount_total < 0 ? "ok" : ""}>
+                            {fmtSignedInt(row.discount_total)}
+                          </td>
+                        </tr>
+                      ))}
+                      {discountsData.counterparties.length === 0 && (
+                        <tr>
+                          <td colSpan={2} className="muted">Скидок на выбранную дату нет</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="table-wrap">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Проект</th>
+                        <th>Организация</th>
+                        <th>Позиция</th>
+                        <th>Дата</th>
+                        <th>Скидка</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {discountsData.entries.map((row) => (
+                        <tr key={`${row.project_id}-${row.item_id}`}>
+                          <td>{row.project_title}</td>
+                          <td>{row.organization || "—"}</td>
+                          <td>{row.item_title}</td>
+                          <td>{row.item_date || "—"}</td>
+                          <td className={row.discount_amount > 0 ? "accent" : row.discount_amount < 0 ? "ok" : ""}>
+                            {fmtSignedInt(row.discount_amount)}
+                          </td>
+                        </tr>
+                      ))}
+                      {discountsData.entries.length === 0 && (
+                        <tr>
+                          <td colSpan={5} className="muted">Позиции со скидкой на выбранную дату не найдены</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="muted">Знак: <b>+</b> дали скидку клиенту, <b>-</b> получили скидку в нашу пользу.</div>
+              </div>
+            )}
           </div>
         </div>
       )}

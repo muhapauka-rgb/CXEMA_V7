@@ -79,6 +79,21 @@ def _ensure_sqlite_columns() -> None:
                     "ADD COLUMN parent_item_id INTEGER"
                 )
             )
+        adjustment_columns = {row[1] for row in conn.execute(text("PRAGMA table_info(client_billing_adjustments)"))}
+        if "discount_enabled" not in adjustment_columns:
+            conn.execute(
+                text(
+                    "ALTER TABLE client_billing_adjustments "
+                    "ADD COLUMN discount_enabled BOOLEAN NOT NULL DEFAULT 0"
+                )
+            )
+        if "discount_amount" not in adjustment_columns:
+            conn.execute(
+                text(
+                    "ALTER TABLE client_billing_adjustments "
+                    "ADD COLUMN discount_amount FLOAT NOT NULL DEFAULT 0.0"
+                )
+            )
 
 
 _ensure_sqlite_columns()
@@ -147,6 +162,48 @@ def _validate_parent_item(
         ).first() is not None
         if has_children:
             raise HTTPException(422, "ITEM_WITH_SUBITEMS_CANNOT_BE_SUBITEM")
+
+
+def _load_discount_adjustment_for_item(db: Session, item_id: int) -> ClientBillingAdjustment | None:
+    return db.execute(
+        select(ClientBillingAdjustment).where(ClientBillingAdjustment.expense_item_id == item_id)
+    ).scalar_one_or_none()
+
+
+def _apply_item_discount(
+    db: Session,
+    item_id: int,
+    discount_enabled: bool,
+    discount_amount: float,
+) -> None:
+    adj = _load_discount_adjustment_for_item(db, item_id)
+    if not adj:
+        adj = ClientBillingAdjustment(
+            expense_item_id=item_id,
+            unit_price_full=0.0,
+            unit_price_billable=0.0,
+            adjustment_type=AdjustmentType.DISCOUNT,
+            reason="",
+        )
+        db.add(adj)
+    adj.discount_enabled = bool(discount_enabled)
+    adj.discount_amount = float(discount_amount or 0.0)
+
+
+def _attach_item_discounts(db: Session, project_id: int, items: list[ExpenseItem]) -> list[ExpenseItem]:
+    if not items:
+        return items
+    adjustments = db.execute(
+        select(ClientBillingAdjustment).join(ExpenseItem, ExpenseItem.id == ClientBillingAdjustment.expense_item_id).where(
+            ExpenseItem.project_id == project_id
+        )
+    ).scalars().all()
+    by_item_id = {int(adj.expense_item_id): adj for adj in adjustments}
+    for it in items:
+        adj = by_item_id.get(int(it.id))
+        setattr(it, "discount_enabled", bool(adj.discount_enabled) if adj else False)
+        setattr(it, "discount_amount", float(adj.discount_amount or 0.0) if adj else 0.0)
+    return items
 
 @router.get("", response_model=list[ProjectOut])
 def list_projects(db: Session = Depends(get_db)):
@@ -247,9 +304,10 @@ def delete_group(project_id: int, group_id: int, db: Session = Depends(get_db)):
 @router.get("/{project_id}/items", response_model=list[ItemOut])
 def list_items(project_id: int, db: Session = Depends(get_db)):
     _get_project_or_404(db, project_id)
-    return db.execute(
+    items = db.execute(
         select(ExpenseItem).where(ExpenseItem.project_id == project_id).order_by(ExpenseItem.group_id.asc(), ExpenseItem.id.asc())
     ).scalars().all()
+    return _attach_item_discounts(db, project_id, items)
 
 @router.post("/{project_id}/items", response_model=ItemOut)
 def create_item(project_id: int, payload: ItemCreate, db: Session = Depends(get_db)):
@@ -280,14 +338,24 @@ def create_item(project_id: int, payload: ItemCreate, db: Session = Depends(get_
     )
     _refresh_item_calculated_base(it)
     db.add(it)
+    db.flush()
+    _apply_item_discount(
+        db=db,
+        item_id=int(it.id),
+        discount_enabled=bool(payload.discount_enabled),
+        discount_amount=float(payload.discount_amount or 0.0),
+    )
     db.commit()
     db.refresh(it)
+    _attach_item_discounts(db, project_id, [it])
     return it
 
 @router.patch("/{project_id}/items/{item_id}", response_model=ItemOut)
 def update_item(project_id: int, item_id: int, payload: ItemUpdate, db: Session = Depends(get_db)):
     it = _get_item_or_404(db, project_id, item_id)
     data = payload.model_dump(exclude_unset=True)
+    discount_enabled = data.pop("discount_enabled", None)
+    discount_amount = data.pop("discount_amount", None)
     has_children = db.execute(
         select(ExpenseItem.id).where(ExpenseItem.parent_item_id == item_id).limit(1)
     ).first() is not None
@@ -317,8 +385,19 @@ def update_item(project_id: int, item_id: int, payload: ItemUpdate, db: Session 
         it.include_in_estimate = False
 
     _refresh_item_calculated_base(it)
+    if discount_enabled is not None or discount_amount is not None:
+        current_adj = _load_discount_adjustment_for_item(db, item_id)
+        resolved_enabled = bool(discount_enabled) if discount_enabled is not None else bool(current_adj.discount_enabled) if current_adj else False
+        resolved_amount = float(discount_amount) if discount_amount is not None else float(current_adj.discount_amount or 0.0) if current_adj else 0.0
+        _apply_item_discount(
+            db=db,
+            item_id=item_id,
+            discount_enabled=resolved_enabled,
+            discount_amount=resolved_amount,
+        )
     db.commit()
     db.refresh(it)
+    _attach_item_discounts(db, project_id, [it])
     return it
 
 @router.delete("/{project_id}/items/{item_id}")

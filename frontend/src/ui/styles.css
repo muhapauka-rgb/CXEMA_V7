@@ -414,7 +414,7 @@ input[type="range"]::-moz-range-thumb {
 .dashboard-strip {
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
 }
 
 .overview-kpi-strip {
@@ -746,12 +746,14 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   text-align: right;
 }
 
-.expense-table .col-sum-extra {
+.expense-table .col-row-total,
+.expense-table .col-discount-amount {
   width: 128px;
   text-align: right;
 }
 
 .expense-table .col-extra-toggle,
+.expense-table .col-discount-toggle,
 .expense-table .col-estimate {
   width: 76px;
   text-align: center;
@@ -766,7 +768,8 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 .expense-table td.col-unit .input,
 .expense-table td.col-sum .input,
 .expense-table td.col-extra-amount .input,
-.expense-table td.col-sum-extra .input {
+.expense-table td.col-row-total .input,
+.expense-table td.col-discount-amount .input {
   text-align: right;
 }
 
@@ -775,12 +778,14 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 }
 
 .expense-table td.col-extra-toggle,
+.expense-table td.col-discount-toggle,
 .expense-table td.col-estimate,
 .expense-table td.col-actions {
   vertical-align: middle;
 }
 
 .expense-table td.col-extra-toggle input[type="checkbox"],
+.expense-table td.col-discount-toggle input[type="checkbox"],
 .expense-table td.col-estimate input[type="checkbox"] {
   width: 10px;
   height: 10px;
@@ -793,17 +798,20 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 }
 
 .expense-table td.col-extra-toggle input[type="checkbox"]:checked,
+.expense-table td.col-discount-toggle input[type="checkbox"]:checked,
 .expense-table td.col-estimate input[type="checkbox"]:checked {
   border-color: var(--accent);
   background: var(--accent);
 }
 
 .expense-table td.col-extra-toggle input[type="checkbox"]:checked::after,
+.expense-table td.col-discount-toggle input[type="checkbox"]:checked::after,
 .expense-table td.col-estimate input[type="checkbox"]:checked::after {
   content: none;
 }
 
 .expense-table td.col-extra-toggle input[type="checkbox"]:focus-visible,
+.expense-table td.col-discount-toggle input[type="checkbox"]:focus-visible,
 .expense-table td.col-estimate input[type="checkbox"]:focus-visible {
   box-shadow: 0 0 0 3px rgba(255, 45, 161, 0.24);
 }
@@ -998,6 +1006,14 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 
 .accent-modal {
   width: min(420px, calc(100vw - 56px));
+}
+
+.discounts-modal {
+  width: min(1020px, calc(100vw - 56px));
+}
+
+.discounts-kpi-strip {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .accent-color-input {

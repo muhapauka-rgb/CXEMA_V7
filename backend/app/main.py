@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .settings import settings
-from .routers import health, projects, overview, sheets, google_auth, life
+from .routers import health, projects, overview, sheets, google_auth, life, discounts
 
 app = FastAPI(title="CXEMA V7 API", version="0.1.0")
 
@@ -23,3 +23,4 @@ app.include_router(overview.router)
 app.include_router(sheets.router)
 app.include_router(google_auth.router)
 app.include_router(life.router)
+app.include_router(discounts.router)

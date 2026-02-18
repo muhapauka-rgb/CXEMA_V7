@@ -53,6 +53,8 @@ type Item = {
   include_in_estimate: boolean
   extra_profit_enabled: boolean
   extra_profit_amount: number
+  discount_enabled: boolean
+  discount_amount: number
   planned_pay_date?: string | null
 }
 
@@ -158,6 +160,8 @@ type ItemSheetDraft = {
   include_in_estimate: boolean
   extra_profit_enabled: boolean
   extra_profit_amount: string
+  discount_enabled: boolean
+  discount_amount: string
 }
 
 function TrashIcon() {
@@ -202,6 +206,13 @@ function toMoneyInt(n: number): string {
   return Number(n || 0).toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 0 })
 }
 
+function toMoneyIntSigned(n: number): string {
+  const value = Number(n || 0)
+  if (!Number.isFinite(value) || value === 0) return "0"
+  const abs = Math.abs(value).toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+  return value > 0 ? `+${abs}` : `-${abs}`
+}
+
 function itemInternalTotal(item: Item): number {
   const base = item.mode === "QTY_PRICE"
     ? Number(item.qty || 0) * Number(item.unit_price_base || 0)
@@ -219,15 +230,31 @@ function parseNonNegative(raw: string, field: string, optional = false): number 
   return n
 }
 
+function parseSigned(raw: string, field: string, optional = false): number | undefined {
+  const value = raw.trim()
+  if (optional && value === "") return undefined
+  const n = parseInputNumber(value)
+  if (n == null) {
+    throw new Error(`${field}: невалидное число`)
+  }
+  return n
+}
+
 function parseDraftNumber(raw: string): number {
   const n = parseInputNumber(raw)
   return n != null && n >= 0 ? n : 0
 }
 
+function parseDraftSignedNumber(raw: string): number {
+  const n = parseInputNumber(raw)
+  return n != null ? n : 0
+}
+
 function itemDraftTotal(draft: ItemSheetDraft): number {
   const base = parseDraftNumber(draft.base_total)
   const extra = draft.extra_profit_enabled ? parseDraftNumber(draft.extra_profit_amount) : 0
-  return base + extra
+  const discount = draft.discount_enabled ? parseDraftSignedNumber(draft.discount_amount) : 0
+  return base + extra - discount
 }
 
 function formatDateParts(year: number, month: number, day: number): string | null {
@@ -354,6 +381,8 @@ function itemToSheetDraft(item: Item): ItemSheetDraft {
     include_in_estimate: item.include_in_estimate ?? true,
     extra_profit_enabled: item.extra_profit_enabled,
     extra_profit_amount: formatNumberValueForInput(item.extra_profit_amount),
+    discount_enabled: item.discount_enabled ?? false,
+    discount_amount: formatNumberValueForInput(item.discount_amount || 0),
   }
 }
 
@@ -442,6 +471,11 @@ export default function ProjectPage() {
     () => new Set(items.filter((it) => it.parent_item_id != null).map((it) => Number(it.parent_item_id))),
     [items],
   )
+  const allItemIds = useMemo(() => new Set(items.map((it) => it.id)), [items])
+  const topLevelItems = useMemo(
+    () => items.filter((it) => it.parent_item_id == null || !allItemIds.has(Number(it.parent_item_id))),
+    [items, allItemIds],
+  )
   const childItemsByParent = useMemo(() => {
     const out = new Map<number, Item[]>()
     for (const it of items) {
@@ -454,13 +488,8 @@ export default function ProjectPage() {
     out.forEach((list) => list.sort((a, b) => a.id - b.id))
     return out
   }, [items])
-  const leafItems = useMemo(
-    () => items.filter((it) => !parentItemIds.has(it.id)),
-    [items, parentItemIds],
-  )
-  const leafItemIds = useMemo(() => new Set(leafItems.map((it) => it.id)), [leafItems])
   const itemMathById = useMemo(() => {
-    const out: Record<number, { base: number; extra: number; total: number }> = {}
+    const out: Record<number, { base: number; extra: number; discount: number; totalBeforeDiscount: number; total: number }> = {}
     for (const it of items) {
       const draft = itemDrafts[it.id] || itemToSheetDraft(it)
       let base = parseDraftNumber(draft.base_total)
@@ -472,7 +501,9 @@ export default function ProjectPage() {
         }
       }
       const extra = draft.extra_profit_enabled ? parseDraftNumber(draft.extra_profit_amount) : 0
-      out[it.id] = { base, extra, total: base + extra }
+      const discount = draft.discount_enabled ? parseDraftSignedNumber(draft.discount_amount) : 0
+      const totalBeforeDiscount = base + extra
+      out[it.id] = { base, extra, discount, totalBeforeDiscount, total: totalBeforeDiscount - discount }
     }
     for (const [parentId, children] of childItemsByParent.entries()) {
       let base = 0
@@ -483,7 +514,12 @@ export default function ProjectPage() {
         base += childMath.base
         extra += childMath.extra
       }
-      out[parentId] = { base, extra, total: base + extra }
+      const parentItem = items.find((it) => it.id === parentId)
+      if (!parentItem) continue
+      const parentDraft = itemDrafts[parentId] || itemToSheetDraft(parentItem)
+      const discount = parentDraft.discount_enabled ? parseDraftSignedNumber(parentDraft.discount_amount) : 0
+      const totalBeforeDiscount = base + extra
+      out[parentId] = { base, extra, discount, totalBeforeDiscount, total: totalBeforeDiscount - discount }
     }
     return out
   }, [items, itemDrafts, childItemsByParent])
@@ -493,12 +529,16 @@ export default function ProjectPage() {
     return parsed
   }, [projectPriceDraft, project?.project_price_total])
   const expensesDisplay = useMemo(
-    () => leafItems.reduce((acc, it) => acc + (itemMathById[it.id]?.total ?? itemInternalTotal(it)), 0),
-    [leafItems, itemMathById],
+    () => topLevelItems.reduce((acc, it) => acc + (itemMathById[it.id]?.total ?? itemInternalTotal(it)), 0),
+    [topLevelItems, itemMathById],
   )
   const extraProfitDisplay = useMemo(
-    () => leafItems.reduce((acc, it) => acc + (itemMathById[it.id]?.extra ?? (it.extra_profit_enabled ? Number(it.extra_profit_amount || 0) : 0)), 0),
-    [leafItems, itemMathById],
+    () => topLevelItems.reduce((acc, it) => acc + (itemMathById[it.id]?.extra ?? (it.extra_profit_enabled ? Number(it.extra_profit_amount || 0) : 0)), 0),
+    [topLevelItems, itemMathById],
+  )
+  const discountDisplay = useMemo(
+    () => topLevelItems.reduce((acc, it) => acc + (itemMathById[it.id]?.discount ?? (it.discount_enabled ? Number(it.discount_amount || 0) : 0)), 0),
+    [topLevelItems, itemMathById],
   )
   const paymentsTotal = useMemo(
     () => paymentRows.reduce((acc, row) => {
@@ -518,12 +558,13 @@ export default function ProjectPage() {
   const groupAgencyTotal = useMemo(
     () => groups.reduce((acc, g) => {
       if (!groupAgencyEnabled[g.id]) return acc
-      const groupTotal = items
-        .filter((it) => it.group_id === g.id && leafItemIds.has(it.id))
+      const groupItemIds = new Set(items.filter((it) => it.group_id === g.id).map((it) => it.id))
+      const groupTopLevel = items.filter((it) => it.group_id === g.id && (it.parent_item_id == null || !groupItemIds.has(Number(it.parent_item_id))))
+      const groupTotal = groupTopLevel
         .reduce((sum, it) => sum + (itemMathById[it.id]?.total ?? itemInternalTotal(it)), 0)
       return acc + (groupTotal * agencyPercent) / 100
     }, 0),
-    [groups, items, groupAgencyEnabled, agencyPercent, itemMathById, leafItemIds],
+    [groups, items, groupAgencyEnabled, agencyPercent, itemMathById],
   )
   const commonAgencyAmount = useMemo(
     () => (isCommonAgencyOpen ? projectPriceDisplayValue * (agencyPercent / 100) : 0),
@@ -532,6 +573,7 @@ export default function ProjectPage() {
   const agencyTotalFromExpenses = groupAgencyTotal + commonAgencyAmount
   const inPocketDisplay = agencyTotalFromExpenses + extraProfitDisplay
   const diffDisplay = projectPriceDisplayValue - (expensesDisplay + agencyTotalFromExpenses)
+  const discountDisplayClass = discountDisplay > 0 ? "accent" : discountDisplay < 0 ? "ok" : ""
   const groupAgencyStorageKey = useMemo(
     () => `cxema-v7:project:${projectId}:group-agency`,
     [projectId],
@@ -755,6 +797,8 @@ export default function ProjectPage() {
         include_in_estimate: preset?.parent_item_id ? false : true,
         extra_profit_enabled: false,
         extra_profit_amount: 0,
+        discount_enabled: false,
+        discount_amount: 0,
         planned_pay_date: null,
       })
       setItems((prev) => {
@@ -770,22 +814,27 @@ export default function ProjectPage() {
     }
   }
 
-  function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
+function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
     const title = draft.title.trim()
     const qty = parseNonNegative(draft.qty, "qty", true)
     const unitPrice = parseNonNegative(draft.unit_price_base, "unit_price_base", true)
     const baseTotal = parseNonNegative(draft.base_total, "base_total", true)
-    const extraProfit = draft.extra_profit_enabled
-      ? (parseNonNegative(draft.extra_profit_amount, "extra_profit_amount") || 0)
-      : 0
+  const extraProfit = draft.extra_profit_enabled
+    ? (parseNonNegative(draft.extra_profit_amount, "extra_profit_amount") || 0)
+    : 0
+  const discountAmount = draft.discount_enabled
+    ? (parseSigned(draft.discount_amount, "discount_amount") || 0)
+    : 0
 
-    const common: Record<string, unknown> = {
-      title,
-      include_in_estimate: draft.include_in_estimate,
-      extra_profit_enabled: draft.extra_profit_enabled,
-      extra_profit_amount: extraProfit,
-      planned_pay_date: parseOptionalDate(draft.planned_pay_date, "planned_pay_date"),
-    }
+  const common: Record<string, unknown> = {
+    title,
+    include_in_estimate: draft.include_in_estimate,
+    extra_profit_enabled: draft.extra_profit_enabled,
+    extra_profit_amount: extraProfit,
+    discount_enabled: draft.discount_enabled,
+    discount_amount: discountAmount,
+    planned_pay_date: parseOptionalDate(draft.planned_pay_date, "planned_pay_date"),
+  }
 
     if (qty !== undefined) {
       if (unitPrice === undefined) {
@@ -821,6 +870,8 @@ export default function ProjectPage() {
             title: draft.title.trim(),
             planned_pay_date: parseOptionalDate(draft.planned_pay_date, "planned_pay_date"),
             include_in_estimate: draft.include_in_estimate,
+            discount_enabled: draft.discount_enabled,
+            discount_amount: draft.discount_enabled ? parseSigned(draft.discount_amount, "discount_amount") || 0 : 0,
           }
         : payloadFromDraft(draft)
       const updated = await apiPatch<Item>(`/api/projects/${projectId}/items/${item.id}`, payload)
@@ -1111,6 +1162,10 @@ export default function ProjectPage() {
           <div className="kpi-value">{toMoneyInt(extraProfitDisplay)}</div>
         </div>
         <div className="kpi-card">
+          <div className="muted">Скидка</div>
+          <div className={`kpi-value ${discountDisplayClass}`}>{toMoneyIntSigned(discountDisplay)}</div>
+        </div>
+        <div className="kpi-card">
           <div className="muted">В кармане</div>
           <div className="kpi-value">{toMoneyInt(inPocketDisplay)}</div>
         </div>
@@ -1178,8 +1233,12 @@ export default function ProjectPage() {
               const draft = itemDrafts[it.id] || itemToSheetDraft(it)
               return !!draft.extra_profit_enabled
             })
-            const baseTotal = gItems
-              .filter((it) => leafItemIds.has(it.id))
+            const showDiscountColumns = topLevelItems.some((it) => {
+              const draft = itemDrafts[it.id] || itemToSheetDraft(it)
+              return !!draft.discount_enabled
+            })
+            const showRowTotalColumn = showExtraProfitColumns || showDiscountColumns
+            const baseTotal = topLevelItems
               .reduce((acc, it) => acc + (itemMathById[it.id]?.total ?? itemInternalTotal(it)), 0)
             const agencyEnabled = !!groupAgencyEnabled[g.id]
             const agencyPercent = Number(project.agency_fee_percent || 0)
@@ -1262,8 +1321,10 @@ export default function ProjectPage() {
                           <th className="col-unit">Цена<br />за ед</th>
                           <th className="col-sum">Сумма</th>
                           {showExtraProfitColumns && <th className="col-extra-amount">Доп<br />прибыль</th>}
-                          {showExtraProfitColumns && <th className="col-sum-extra">Сумма с доп<br />прибылью</th>}
+                          {showRowTotalColumn && <th className="col-row-total">Итог<br />строки</th>}
+                          {showDiscountColumns && <th className="col-discount-amount">Скидка</th>}
                           <th className="col-extra-toggle">Доп<br />прибыль</th>
+                          <th className="col-discount-toggle">Скидка</th>
                           <th className="col-estimate">В<br />смету</th>
                           <th className="col-actions" />
                         </tr>
@@ -1483,13 +1544,40 @@ export default function ProjectPage() {
                                   )}
                                 </td>
                               )}
-                              {showExtraProfitColumns && (
-                                <td className="col-sum-extra">
+                              {showRowTotalColumn && (
+                                <td className="col-row-total">
                                   <input
                                     className="input"
                                     value={formatNumberValueForInput(rowTotal)}
                                     readOnly
                                   />
+                                </td>
+                              )}
+                              {showDiscountColumns && (
+                                <td className="col-discount-amount">
+                                  {isSubitem ? (
+                                    <span className="muted">—</span>
+                                  ) : draft.discount_enabled ? (
+                                    <input
+                                      className="input"
+                                      value={draft.discount_amount}
+                                      onChange={(e) => setItemDrafts((prev) => ({ ...prev, [it.id]: { ...draft, discount_amount: e.target.value } }))}
+                                      onFocus={(e) => handleZeroFocus(e.currentTarget)}
+                                      onBlur={(e) => {
+                                        const next = { ...draft, discount_amount: normalizeNumberDraftInput(e.currentTarget.value) }
+                                        setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
+                                        void persistItemRow(it, next)
+                                      }}
+                                      onKeyDown={(e) => {
+                                        if (e.key !== "Enter") return
+                                        e.preventDefault()
+                                        const next = { ...draft, discount_amount: normalizeNumberDraftInput(e.currentTarget.value) }
+                                        commitItemDraft(it, next)
+                                      }}
+                                    />
+                                  ) : (
+                                    <span className="muted">—</span>
+                                  )}
                                 </td>
                               )}
                               <td className="col-extra-toggle">
@@ -1505,6 +1593,26 @@ export default function ProjectPage() {
                                         ...draft,
                                         extra_profit_enabled: checked,
                                         extra_profit_amount: checked ? draft.extra_profit_amount : "0",
+                                      }
+                                      setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
+                                      void persistItemRow(it, next)
+                                    }}
+                                  />
+                                )}
+                              </td>
+                              <td className="col-discount-toggle">
+                                {isSubitem ? (
+                                  <span className="muted">—</span>
+                                ) : (
+                                  <input
+                                    type="checkbox"
+                                    checked={draft.discount_enabled}
+                                    onChange={(e) => {
+                                      const checked = e.target.checked
+                                      const next = {
+                                        ...draft,
+                                        discount_enabled: checked,
+                                        discount_amount: checked ? draft.discount_amount : "0",
                                       }
                                       setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
                                       void persistItemRow(it, next)
@@ -1548,8 +1656,10 @@ export default function ProjectPage() {
                             <td className="col-unit muted">—</td>
                             <td className="col-sum">{toMoney(agencyAmount)}</td>
                             {showExtraProfitColumns && <td className="col-extra-amount muted">—</td>}
-                            {showExtraProfitColumns && <td className="col-sum-extra muted">—</td>}
+                            {showRowTotalColumn && <td className="col-row-total muted">—</td>}
+                            {showDiscountColumns && <td className="col-discount-amount muted">—</td>}
                             <td className="col-extra-toggle muted">—</td>
+                            <td className="col-discount-toggle muted">—</td>
                             <td className="col-estimate muted">—</td>
                             <td className="col-actions">
                               <button

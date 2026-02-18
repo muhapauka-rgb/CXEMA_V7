@@ -19,12 +19,14 @@ function groupThousands(intPart: string): string {
 export function formatNumberForInput(raw: string): string {
   const normalized = normalizeNumberText(raw)
   if (!normalized) return ""
-  if (!/^\d+(\.\d+)?$/.test(normalized)) return raw.trim()
+  if (!/^-?\d+(\.\d+)?$/.test(normalized)) return raw.trim()
 
-  const [intPart, fracPart] = normalized.split(".")
+  const sign = normalized.startsWith("-") ? "-" : ""
+  const plain = sign ? normalized.slice(1) : normalized
+  const [intPart, fracPart] = plain.split(".")
   const grouped = groupThousands(intPart)
-  if (fracPart == null || fracPart.length === 0) return grouped
-  return `${grouped},${fracPart}`
+  if (fracPart == null || fracPart.length === 0) return `${sign}${grouped}`
+  return `${sign}${grouped},${fracPart}`
 }
 
 export function formatNumberValueForInput(value: number | null | undefined): string {

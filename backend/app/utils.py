@@ -6,7 +6,7 @@ from typing import DefaultDict
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func
 
-from .models import Project, ExpenseGroup, ExpenseItem, ClientPaymentsPlan, ClientPaymentsFact
+from .models import Project, ExpenseGroup, ExpenseItem, ClientPaymentsPlan, ClientPaymentsFact, ClientBillingAdjustment
 
 def gen_stable_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:16]}"
@@ -23,7 +23,10 @@ def _item_base_total(item: ExpenseItem) -> float:
     return base
 
 
-def _effective_parent_items(items: list[ExpenseItem]) -> list[dict]:
+def _effective_parent_items(
+    items: list[ExpenseItem],
+    discount_by_item_id: dict[int, tuple[bool, float]] | None = None,
+) -> list[dict]:
     # Effective expense model:
     # - Only top-level (parent) rows are accounting rows.
     # - If a parent has child rows, parent amounts are derived from children.
@@ -42,6 +45,7 @@ def _effective_parent_items(items: list[ExpenseItem]) -> list[dict]:
     out: list[dict] = []
     for parent in top_level:
         children = children_by_parent.get(int(parent.id), [])
+        discount_enabled, discount_amount = (discount_by_item_id or {}).get(int(parent.id), (False, 0.0))
         if children:
             base_total = sum(_item_base_total(ch) for ch in children)
             extra_total = sum(float(ch.extra_profit_amount or 0.0) for ch in children if ch.extra_profit_enabled)
@@ -51,16 +55,35 @@ def _effective_parent_items(items: list[ExpenseItem]) -> list[dict]:
             base_total = _item_base_total(parent)
             extra_total = float(parent.extra_profit_amount or 0.0) if parent.extra_profit_enabled else 0.0
             planned_pay_date = parent.planned_pay_date
+        discount_total = float(discount_amount) if discount_enabled else 0.0
+        effective_total = float(base_total) + float(extra_total) - discount_total
 
         out.append(
             {
                 "item": parent,
                 "base_total": float(base_total),
                 "extra_total": float(extra_total),
+                "discount_total": discount_total,
+                "effective_total": effective_total,
                 "planned_pay_date": planned_pay_date,
             }
         )
     return out
+
+
+def _discount_map_for_items(db: Session, item_ids: list[int]) -> dict[int, tuple[bool, float]]:
+    if not item_ids:
+        return {}
+    rows = db.execute(
+        select(ClientBillingAdjustment).where(ClientBillingAdjustment.expense_item_id.in_(item_ids))
+    ).scalars().all()
+    return {int(row.expense_item_id): (bool(row.discount_enabled), float(row.discount_amount or 0.0)) for row in rows}
+
+
+def effective_project_expense_rows(db: Session, project_id: int) -> list[dict]:
+    all_items = db.execute(select(ExpenseItem).where(ExpenseItem.project_id == project_id)).scalars().all()
+    discount_map = _discount_map_for_items(db, [int(it.id) for it in all_items])
+    return _effective_parent_items(all_items, discount_map)
 
 def project_pocket_monthly_components(db: Session, project: Project, as_of: date) -> dict[str, dict[str, float]]:
     # Cash model:
@@ -105,11 +128,13 @@ def project_pocket_monthly_components(db: Session, project: Project, as_of: date
     all_items = db.execute(
         select(ExpenseItem).where(ExpenseItem.project_id == project.id)
     ).scalars().all()
-    for eff in _effective_parent_items(all_items):
+    discount_map = _discount_map_for_items(db, [int(it.id) for it in all_items])
+    for eff in _effective_parent_items(all_items, discount_map):
         due_date = eff["planned_pay_date"] or project_created
         if due_date > as_of:
             continue
-        base = float(eff["base_total"])
+        # Expenses consume billable base (with discount), extra profit is paid by claim step below.
+        base = float(eff["base_total"]) - float(eff["discount_total"])
         if base > 0:
             events_expense[due_date] += base
         extra = float(eff["extra_total"])
@@ -160,17 +185,28 @@ def project_pocket_monthly_components(db: Session, project: Project, as_of: date
 def compute_project_financials(db: Session, project_id: int) -> dict:
     # expenses_total = sum(total_cost_internal) where total_cost_internal = base_total + extra_profit_amount
     all_items = db.execute(select(ExpenseItem).where(ExpenseItem.project_id == project_id)).scalars().all()
+    discount_map = _discount_map_for_items(db, [int(it.id) for it in all_items])
     expenses_total = 0.0
     extra_profit_total = 0.0
-    for eff in _effective_parent_items(all_items):
-        base = float(eff["base_total"])
+    discount_total = 0.0
+    for eff in _effective_parent_items(all_items, discount_map):
+        total = float(eff["effective_total"])
         extra = float(eff["extra_total"])
-        expenses_total += base + extra
+        expenses_total += total
         extra_profit_total += extra
+        discount_total += float(eff["discount_total"])
 
     project = db.get(Project, project_id)
     if not project:
-        return {"project_id": project_id, "expenses_total": 0.0, "agency_fee": 0.0, "extra_profit_total": 0.0, "in_pocket": 0.0, "diff": 0.0}
+        return {
+            "project_id": project_id,
+            "expenses_total": 0.0,
+            "agency_fee": 0.0,
+            "extra_profit_total": 0.0,
+            "discount_total": 0.0,
+            "in_pocket": 0.0,
+            "diff": 0.0,
+        }
 
     project_total = float(project.project_price_total or 0.0)
     agency_fee = project_total * (float(project.agency_fee_percent) / 100.0)
@@ -182,6 +218,7 @@ def compute_project_financials(db: Session, project_id: int) -> dict:
         "expenses_total": round(expenses_total, 2),
         "agency_fee": round(agency_fee, 2),
         "extra_profit_total": round(extra_profit_total, 2),
+        "discount_total": round(discount_total, 2),
         "in_pocket": round(in_pocket, 2),
         "diff": round(diff, 2),
     }
@@ -191,14 +228,15 @@ def expense_breakdown_to_date(db: Session, project_id: int, at: date) -> tuple[f
     all_items = db.execute(
         select(ExpenseItem).where(ExpenseItem.project_id == project_id)
     ).scalars().all()
+    discount_map = _discount_map_for_items(db, [int(it.id) for it in all_items])
 
     spent_base = 0.0
     extra_profit = 0.0
-    for eff in _effective_parent_items(all_items):
+    for eff in _effective_parent_items(all_items, discount_map):
         due_date = eff["planned_pay_date"]
         if due_date is not None and due_date > at:
             continue
-        base = float(eff["base_total"])
+        base = float(eff["effective_total"])
         spent_base += base
         extra_profit += float(eff["extra_total"])
 

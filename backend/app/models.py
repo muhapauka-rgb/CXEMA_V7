@@ -122,6 +122,8 @@ class ClientBillingAdjustment(Base):
     unit_price_billable: Mapped[float] = mapped_column(Float, default=0.0)
     adjustment_type: Mapped[AdjustmentType] = mapped_column(Enum(AdjustmentType), default=AdjustmentType.DISCOUNT)
     reason: Mapped[str] = mapped_column(String(512), default="")
+    discount_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    discount_amount: Mapped[float] = mapped_column(Float, default=0.0)
 
     item = relationship("ExpenseItem", back_populates="adjustment")
 
