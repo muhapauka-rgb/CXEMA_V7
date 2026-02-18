@@ -78,6 +78,11 @@ class ExpenseItem(Base):
     stable_item_id: Mapped[str] = mapped_column(String(64), index=True)  # стабильный ID для Sheets
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     group_id: Mapped[int] = mapped_column(ForeignKey("expense_groups.id", ondelete="CASCADE"), index=True)
+    parent_item_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("expense_items.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
 
     title: Mapped[str] = mapped_column(String(255))
     mode: Mapped[ItemMode] = mapped_column(Enum(ItemMode), default=ItemMode.SINGLE_TOTAL)

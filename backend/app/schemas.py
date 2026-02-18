@@ -67,6 +67,7 @@ class GroupOut(BaseModel):
 
 class ItemCreate(BaseModel):
     group_id: int
+    parent_item_id: Optional[int] = None
     title: str
     mode: str = "SINGLE_TOTAL"
     qty: Optional[float] = Field(default=None, ge=0)
@@ -79,6 +80,7 @@ class ItemCreate(BaseModel):
 
 class ItemUpdate(BaseModel):
     group_id: Optional[int] = None
+    parent_item_id: Optional[int] = None
     title: Optional[str] = None
     mode: Optional[str] = None
     qty: Optional[float] = Field(default=None, ge=0)
@@ -94,6 +96,7 @@ class ItemOut(BaseModel):
     stable_item_id: str
     project_id: int
     group_id: int
+    parent_item_id: Optional[int]
     title: str
     mode: str
     qty: Optional[float]
@@ -279,6 +282,13 @@ class LifeProjectBreakdown(BaseModel):
     project_id: int
     title: str
     organization: Optional[str] = None
+    source_month_key: str
+    source_month_label: str
+    source_kind: str
+    opening_balance: float
+    inflow_in_source_month: float
+    used_for_life: float
+    closing_balance: float
     received_last_month: float
     to_life: float
     to_savings: float
@@ -288,5 +298,6 @@ class LifePreviousMonthOut(BaseModel):
     target_amount: float
     life_covered: float
     life_gap: float
+    reserve_used: float
     savings_total: float
     projects: List[LifeProjectBreakdown]

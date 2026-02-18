@@ -63,7 +63,7 @@ export default function SettingsPage() {
 
   return (
     <div className="grid">
-      <div className="card">
+      <div className="card top-panel">
         <div className="row" style={{ justifyContent: "space-between" }}>
           <div className="h1">Настройки</div>
           <Link className="btn" to="/">← на главную</Link>

@@ -44,6 +44,7 @@ type Item = {
   stable_item_id: string
   project_id: number
   group_id: number
+  parent_item_id?: number | null
   title: string
   mode: ItemMode
   qty?: number | null
@@ -357,12 +358,12 @@ function itemToSheetDraft(item: Item): ItemSheetDraft {
 }
 
 function tryCalcBaseTotal(qtyRaw: string, unitRaw: string): string | null {
-  if (qtyRaw.trim() === "") return null
   if (unitRaw.trim() === "") return null
-  const q = parseInputNumber(qtyRaw)
   const u = parseInputNumber(unitRaw)
-  if (q == null || q < 0) return null
   if (u == null || u < 0) return null
+  if (qtyRaw.trim() === "") return formatNumberForInput(String(u))
+  const q = parseInputNumber(qtyRaw)
+  if (q == null || q < 0) return null
   if (q === 0) return formatNumberForInput(String(u))
   return formatNumberForInput(String(q * u))
 }
@@ -437,6 +438,27 @@ export default function ProjectPage() {
     ]).sort((a, b) => a.pay_date.localeCompare(b.pay_date) || a.id - b.id),
     [planPayments, factPayments],
   )
+  const parentItemIds = useMemo(
+    () => new Set(items.filter((it) => it.parent_item_id != null).map((it) => Number(it.parent_item_id))),
+    [items],
+  )
+  const childItemsByParent = useMemo(() => {
+    const out = new Map<number, Item[]>()
+    for (const it of items) {
+      if (it.parent_item_id == null) continue
+      const key = Number(it.parent_item_id)
+      const list = out.get(key) || []
+      list.push(it)
+      out.set(key, list)
+    }
+    out.forEach((list) => list.sort((a, b) => a.id - b.id))
+    return out
+  }, [items])
+  const leafItems = useMemo(
+    () => items.filter((it) => !parentItemIds.has(it.id)),
+    [items, parentItemIds],
+  )
+  const leafItemIds = useMemo(() => new Set(leafItems.map((it) => it.id)), [leafItems])
   const itemMathById = useMemo(() => {
     const out: Record<number, { base: number; extra: number; total: number }> = {}
     for (const it of items) {
@@ -452,20 +474,31 @@ export default function ProjectPage() {
       const extra = draft.extra_profit_enabled ? parseDraftNumber(draft.extra_profit_amount) : 0
       out[it.id] = { base, extra, total: base + extra }
     }
+    for (const [parentId, children] of childItemsByParent.entries()) {
+      let base = 0
+      let extra = 0
+      for (const child of children) {
+        const childMath = out[child.id]
+        if (!childMath) continue
+        base += childMath.base
+        extra += childMath.extra
+      }
+      out[parentId] = { base, extra, total: base + extra }
+    }
     return out
-  }, [items, itemDrafts])
+  }, [items, itemDrafts, childItemsByParent])
   const projectPriceDisplayValue = useMemo(() => {
     const parsed = parseInputNumber(projectPriceDraft)
     if (parsed == null || parsed < 0) return Number(project?.project_price_total || 0)
     return parsed
   }, [projectPriceDraft, project?.project_price_total])
   const expensesDisplay = useMemo(
-    () => items.reduce((acc, it) => acc + (itemMathById[it.id]?.total ?? itemInternalTotal(it)), 0),
-    [items, itemMathById],
+    () => leafItems.reduce((acc, it) => acc + (itemMathById[it.id]?.total ?? itemInternalTotal(it)), 0),
+    [leafItems, itemMathById],
   )
   const extraProfitDisplay = useMemo(
-    () => items.reduce((acc, it) => acc + (itemMathById[it.id]?.extra ?? (it.extra_profit_enabled ? Number(it.extra_profit_amount || 0) : 0)), 0),
-    [items, itemMathById],
+    () => leafItems.reduce((acc, it) => acc + (itemMathById[it.id]?.extra ?? (it.extra_profit_enabled ? Number(it.extra_profit_amount || 0) : 0)), 0),
+    [leafItems, itemMathById],
   )
   const paymentsTotal = useMemo(
     () => paymentRows.reduce((acc, row) => {
@@ -486,11 +519,11 @@ export default function ProjectPage() {
     () => groups.reduce((acc, g) => {
       if (!groupAgencyEnabled[g.id]) return acc
       const groupTotal = items
-        .filter((it) => it.group_id === g.id)
+        .filter((it) => it.group_id === g.id && leafItemIds.has(it.id))
         .reduce((sum, it) => sum + (itemMathById[it.id]?.total ?? itemInternalTotal(it)), 0)
       return acc + (groupTotal * agencyPercent) / 100
     }, 0),
-    [groups, items, groupAgencyEnabled, agencyPercent, itemMathById],
+    [groups, items, groupAgencyEnabled, agencyPercent, itemMathById, leafItemIds],
   )
   const commonAgencyAmount = useMemo(
     () => (isCommonAgencyOpen ? projectPriceDisplayValue * (agencyPercent / 100) : 0),
@@ -498,7 +531,7 @@ export default function ProjectPage() {
   )
   const agencyTotalFromExpenses = groupAgencyTotal + commonAgencyAmount
   const inPocketDisplay = agencyTotalFromExpenses + extraProfitDisplay
-  const diffDisplay = projectPriceDisplayValue - expensesDisplay
+  const diffDisplay = projectPriceDisplayValue - (expensesDisplay + agencyTotalFromExpenses)
   const groupAgencyStorageKey = useMemo(
     () => `cxema-v7:project:${projectId}:group-agency`,
     [projectId],
@@ -707,18 +740,19 @@ export default function ProjectPage() {
     }
   }
 
-  async function createItemInGroup(groupId: number, preset?: { title?: string }) {
+  async function createItemInGroup(groupId: number, preset?: { title?: string; parent_item_id?: number | null }) {
     try {
       setError(null)
       setCreatingInGroup(groupId)
       const created = await apiPost<Item>(`/api/projects/${projectId}/items`, {
         group_id: groupId,
+        parent_item_id: preset?.parent_item_id ?? null,
         title: preset?.title || "",
         mode: "SINGLE_TOTAL",
         qty: null,
         unit_price_base: null,
         base_total: 0,
-        include_in_estimate: true,
+        include_in_estimate: preset?.parent_item_id ? false : true,
         extra_profit_enabled: false,
         extra_profit_amount: 0,
         planned_pay_date: null,
@@ -782,7 +816,13 @@ export default function ProjectPage() {
     try {
       setError(null)
       setSavingItemId(item.id)
-      const payload = payloadFromDraft(draft)
+      const payload = parentItemIds.has(item.id)
+        ? {
+            title: draft.title.trim(),
+            planned_pay_date: parseOptionalDate(draft.planned_pay_date, "planned_pay_date"),
+            include_in_estimate: draft.include_in_estimate,
+          }
+        : payloadFromDraft(draft)
       const updated = await apiPatch<Item>(`/api/projects/${projectId}/items/${item.id}`, payload)
       setItems((prev) => prev.map((it) => (it.id === item.id ? updated : it)))
       setItemDrafts((prev) => ({ ...prev, [item.id]: itemToSheetDraft(updated) }))
@@ -808,12 +848,18 @@ export default function ProjectPage() {
   async function deleteItemRow(itemId: number) {
     try {
       setError(null)
+      const childIdsToDelete = new Set(
+        items.filter((it) => it.parent_item_id === itemId).map((it) => it.id),
+      )
       await apiDelete(`/api/projects/${projectId}/items/${itemId}`)
       if (selectedItemId === itemId) setSelectedItemId(null)
-      setItems((prev) => prev.filter((it) => it.id !== itemId))
+      setItems((prev) => prev.filter((it) => it.id !== itemId && it.parent_item_id !== itemId))
       setItemDrafts((prev) => {
         const next = { ...prev }
         delete next[itemId]
+        childIdsToDelete.forEach((childId) => {
+          delete next[childId]
+        })
         return next
       })
     } catch (e) {
@@ -1015,7 +1061,7 @@ export default function ProjectPage() {
   return (
     <>
     <div className={`grid ${isSettingsOpen ? "page-content-muted" : ""}`}>
-      <div className="panel top-panel">
+      <div className="panel top-panel top-panel-sticky">
         <div className="row" style={{ justifyContent: "space-between" }}>
           <div>
             <div className="h1" style={{ marginBottom: 4 }}>{project.title}</div>
@@ -1118,11 +1164,23 @@ export default function ProjectPage() {
 
           {groups.map((g) => {
             const gItems = items.filter((it) => it.group_id === g.id)
+            const gItemIds = new Set(gItems.map((it) => it.id))
+            const topLevelItems = gItems
+              .filter((it) => it.parent_item_id == null || !gItemIds.has(Number(it.parent_item_id)))
+              .sort((a, b) => a.id - b.id)
+            const orderedRows: Item[] = []
+            for (const parent of topLevelItems) {
+              orderedRows.push(parent)
+              const children = childItemsByParent.get(parent.id) || []
+              for (const child of children) orderedRows.push(child)
+            }
             const showExtraProfitColumns = gItems.some((it) => {
               const draft = itemDrafts[it.id] || itemToSheetDraft(it)
               return !!draft.extra_profit_enabled
             })
-            const baseTotal = gItems.reduce((acc, it) => acc + (itemMathById[it.id]?.total ?? itemInternalTotal(it)), 0)
+            const baseTotal = gItems
+              .filter((it) => leafItemIds.has(it.id))
+              .reduce((acc, it) => acc + (itemMathById[it.id]?.total ?? itemInternalTotal(it)), 0)
             const agencyEnabled = !!groupAgencyEnabled[g.id]
             const agencyPercent = Number(project.agency_fee_percent || 0)
             const agencyAmount = agencyEnabled ? (baseTotal * agencyPercent) / 100 : 0
@@ -1161,8 +1219,17 @@ export default function ProjectPage() {
                     <span>{toMoney(total)}</span>
                     <button
                       className="btn sheet-agency-btn"
-                      disabled={creatingInGroup === g.id || savingGroupId === g.id || agencyEnabled}
-                      onClick={() => setGroupAgencyEnabled((prev) => ({ ...prev, [g.id]: true }))}
+                      aria-label={agencyEnabled ? "Убрать агентские в группе" : "Добавить агентские в группе"}
+                      disabled={creatingInGroup === g.id || savingGroupId === g.id}
+                      onClick={() => setGroupAgencyEnabled((prev) => {
+                        const next = { ...prev }
+                        if (next[g.id]) {
+                          delete next[g.id]
+                        } else {
+                          next[g.id] = true
+                        }
+                        return next
+                      })}
                     >
                       Агентские
                     </button>
@@ -1202,35 +1269,55 @@ export default function ProjectPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {gItems.map((it) => {
+                        {orderedRows.map((it) => {
                           const draft = itemDrafts[it.id] || itemToSheetDraft(it)
-                          const rowTotal = itemDraftTotal(draft)
+                          const rowMath = itemMathById[it.id]
+                          const rowBase = rowMath?.base ?? parseDraftNumber(draft.base_total)
+                          const rowExtra = rowMath?.extra ?? (draft.extra_profit_enabled ? parseDraftNumber(draft.extra_profit_amount) : 0)
+                          const rowTotal = rowMath?.total ?? itemDraftTotal(draft)
+                          const isSubitem = it.parent_item_id != null
+                          const childRows = childItemsByParent.get(it.id) || []
+                          const hasSubitems = childRows.length > 0
+                          const latestChildDate = childRows.reduce((maxDate, child) => {
+                            const childDraft = itemDrafts[child.id] || itemToSheetDraft(child)
+                            const parsed = parseFlexibleDate(childDraft.planned_pay_date || "")
+                            if (!parsed) return maxDate
+                            return parsed > maxDate ? parsed : maxDate
+                          }, "")
+                          const displayDate = hasSubitems ? (draft.planned_pay_date || latestChildDate) : draft.planned_pay_date
                           return (
-                            <tr key={it.id}>
-                              <td className="col-title">
-                                <input
-                                  className="input"
-                                  value={draft.title}
-                                  placeholder="Название"
-                                  onChange={(e) => setItemDrafts((prev) => ({ ...prev, [it.id]: { ...draft, title: e.target.value } }))}
-                                  onBlur={(e) => {
-                                    const next = { ...draft, title: e.currentTarget.value }
-                                    setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
-                                    void persistItemRow(it, next)
-                                  }}
-                                  onKeyDown={(e) => {
-                                    if (e.key !== "Enter") return
-                                    e.preventDefault()
-                                    const next = { ...draft, title: e.currentTarget.value }
-                                    commitItemDraft(it, next)
-                                  }}
-                                />
+                            <tr key={it.id} className={isSubitem ? "expense-row-subitem" : ""}>
+                              <td className={`col-title ${isSubitem ? "subitem-title-cell" : ""}`}>
+                                <div className={isSubitem ? "subitem-title-wrap" : undefined}>
+                                  {isSubitem && <span className="subitem-marker">↳</span>}
+                                  <input
+                                    className="input"
+                                    value={draft.title}
+                                    placeholder="Название"
+                                    onDoubleClick={() => {
+                                      if (isSubitem) return
+                                      void createItemInGroup(g.id, { parent_item_id: it.id })
+                                    }}
+                                    onChange={(e) => setItemDrafts((prev) => ({ ...prev, [it.id]: { ...draft, title: e.target.value } }))}
+                                    onBlur={(e) => {
+                                      const next = { ...draft, title: e.currentTarget.value }
+                                      setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
+                                      void persistItemRow(it, next)
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (e.key !== "Enter") return
+                                      e.preventDefault()
+                                      const next = { ...draft, title: e.currentTarget.value }
+                                      commitItemDraft(it, next)
+                                    }}
+                                  />
+                                </div>
                               </td>
                               <td className="col-date">
                                 <div className="date-cell">
                                   <input
                                     className="input"
-                                    value={draft.planned_pay_date}
+                                    value={displayDate}
                                     placeholder="дд.мм.гггг"
                                     onChange={(e) => setItemDrafts((prev) => ({ ...prev, [it.id]: { ...draft, planned_pay_date: e.target.value } }))}
                                     onClick={(e) => {
@@ -1258,7 +1345,7 @@ export default function ProjectPage() {
                                     type="date"
                                     tabIndex={-1}
                                     aria-hidden="true"
-                                    value={toCalendarDateValue(draft.planned_pay_date)}
+                                    value={toCalendarDateValue(displayDate)}
                                     onChange={(e) => {
                                       const next = { ...draft, planned_pay_date: e.target.value }
                                       commitItemDraft(it, next)
@@ -1269,9 +1356,11 @@ export default function ProjectPage() {
                               <td className="col-qty">
                                 <input
                                   className="input"
-                                  value={draft.qty}
+                                  value={hasSubitems ? "" : draft.qty}
                                   placeholder="0"
+                                  readOnly={hasSubitems}
                                   onChange={(e) => {
+                                    if (hasSubitems) return
                                     const nextQty = e.target.value
                                     const autoTotal = tryCalcBaseTotal(nextQty, draft.unit_price_base)
                                     setItemDrafts((prev) => ({
@@ -1284,6 +1373,7 @@ export default function ProjectPage() {
                                     }))
                                   }}
                                   onBlur={(e) => {
+                                    if (hasSubitems) return
                                     const nextQty = normalizeNumberDraftInput(e.currentTarget.value)
                                     const autoTotal = tryCalcBaseTotal(nextQty, draft.unit_price_base)
                                     const next = { ...draft, qty: nextQty, base_total: autoTotal ?? draft.base_total }
@@ -1293,6 +1383,7 @@ export default function ProjectPage() {
                                   onKeyDown={(e) => {
                                     if (e.key !== "Enter") return
                                     e.preventDefault()
+                                    if (hasSubitems) return
                                     const nextQty = normalizeNumberDraftInput(e.currentTarget.value)
                                     const autoTotal = tryCalcBaseTotal(nextQty, draft.unit_price_base)
                                     const next = { ...draft, qty: nextQty, base_total: autoTotal ?? draft.base_total }
@@ -1303,9 +1394,11 @@ export default function ProjectPage() {
                               <td className="col-unit">
                                 <input
                                   className="input"
-                                  value={draft.unit_price_base}
+                                  value={hasSubitems ? "" : draft.unit_price_base}
                                   placeholder="0"
+                                  readOnly={hasSubitems}
                                   onChange={(e) => {
+                                    if (hasSubitems) return
                                     const nextUnit = e.target.value
                                     const autoTotal = tryCalcBaseTotal(draft.qty, nextUnit)
                                     setItemDrafts((prev) => ({
@@ -1318,6 +1411,7 @@ export default function ProjectPage() {
                                     }))
                                   }}
                                   onBlur={(e) => {
+                                    if (hasSubitems) return
                                     const nextUnit = normalizeNumberDraftInput(e.currentTarget.value)
                                     const autoTotal = tryCalcBaseTotal(draft.qty, nextUnit)
                                     const next = { ...draft, unit_price_base: nextUnit, base_total: autoTotal ?? draft.base_total }
@@ -1327,6 +1421,7 @@ export default function ProjectPage() {
                                   onKeyDown={(e) => {
                                     if (e.key !== "Enter") return
                                     e.preventDefault()
+                                    if (hasSubitems) return
                                     const nextUnit = normalizeNumberDraftInput(e.currentTarget.value)
                                     const autoTotal = tryCalcBaseTotal(draft.qty, nextUnit)
                                     const next = { ...draft, unit_price_base: nextUnit, base_total: autoTotal ?? draft.base_total }
@@ -1337,12 +1432,13 @@ export default function ProjectPage() {
                               <td className="col-sum">
                                 <input
                                   className="input"
-                                  value={draft.base_total}
+                                  value={hasSubitems ? formatNumberValueForInput(rowBase) : draft.base_total}
                                   placeholder="Сумма"
-                                  readOnly={draft.qty.trim() !== ""}
+                                  readOnly={hasSubitems || draft.qty.trim() !== ""}
                                   onChange={(e) => setItemDrafts((prev) => ({ ...prev, [it.id]: { ...draft, base_total: e.target.value } }))}
                                   onFocus={(e) => handleZeroFocus(e.currentTarget)}
                                   onBlur={(e) => {
+                                    if (hasSubitems) return
                                     const next = { ...draft, base_total: normalizeNumberDraftInput(e.currentTarget.value) }
                                     setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
                                     void persistItemRow(it, next)
@@ -1350,6 +1446,7 @@ export default function ProjectPage() {
                                   onKeyDown={(e) => {
                                     if (e.key !== "Enter") return
                                     e.preventDefault()
+                                    if (hasSubitems) return
                                     const next = { ...draft, base_total: normalizeNumberDraftInput(e.currentTarget.value) }
                                     commitItemDraft(it, next)
                                   }}
@@ -1357,7 +1454,13 @@ export default function ProjectPage() {
                               </td>
                               {showExtraProfitColumns && (
                                 <td className="col-extra-amount">
-                                  {draft.extra_profit_enabled ? (
+                                  {hasSubitems ? (
+                                    <input
+                                      className="input"
+                                      value={formatNumberValueForInput(rowExtra)}
+                                      readOnly
+                                    />
+                                  ) : draft.extra_profit_enabled ? (
                                     <input
                                       className="input"
                                       value={draft.extra_profit_amount}
@@ -1390,31 +1493,39 @@ export default function ProjectPage() {
                                 </td>
                               )}
                               <td className="col-extra-toggle">
-                                <input
-                                  type="checkbox"
-                                  checked={draft.extra_profit_enabled}
-                                  onChange={(e) => {
-                                    const checked = e.target.checked
-                                    const next = {
-                                      ...draft,
-                                      extra_profit_enabled: checked,
-                                      extra_profit_amount: checked ? draft.extra_profit_amount : "0",
-                                    }
-                                    setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
-                                    void persistItemRow(it, next)
-                                  }}
-                                />
+                                {hasSubitems ? (
+                                  <span className="muted">—</span>
+                                ) : (
+                                  <input
+                                    type="checkbox"
+                                    checked={draft.extra_profit_enabled}
+                                    onChange={(e) => {
+                                      const checked = e.target.checked
+                                      const next = {
+                                        ...draft,
+                                        extra_profit_enabled: checked,
+                                        extra_profit_amount: checked ? draft.extra_profit_amount : "0",
+                                      }
+                                      setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
+                                      void persistItemRow(it, next)
+                                    }}
+                                  />
+                                )}
                               </td>
                               <td className="col-estimate">
-                                <input
-                                  type="checkbox"
-                                  checked={draft.include_in_estimate}
-                                  onChange={(e) => {
-                                    const next = { ...draft, include_in_estimate: e.target.checked }
-                                    setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
-                                    void persistItemRow(it, next)
-                                  }}
-                                />
+                                {isSubitem ? (
+                                  <span className="muted">—</span>
+                                ) : (
+                                  <input
+                                    type="checkbox"
+                                    checked={draft.include_in_estimate}
+                                    onChange={(e) => {
+                                      const next = { ...draft, include_in_estimate: e.target.checked }
+                                      setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
+                                      void persistItemRow(it, next)
+                                    }}
+                                  />
+                                )}
                               </td>
                               <td className="col-actions">
                                 <button
@@ -1472,6 +1583,7 @@ export default function ProjectPage() {
               {isCommonAgencyOpen && (
                 <label className="row agency-estimate-check">
                   <input
+                    className="agency-estimate-dot"
                     type="checkbox"
                     checked={project.agency_fee_include_in_estimate ?? true}
                     disabled={settingsSaving}
@@ -1482,7 +1594,7 @@ export default function ProjectPage() {
               )}
               <button
                 className="btn sheet-plus-btn agency-add-btn"
-                aria-label={isCommonAgencyOpen ? "Убрать агентские на весь проект" : "Показать агентские на весь проект"}
+                aria-label={isCommonAgencyOpen ? "Убрать агентские на весь проект" : "Добавить агентские на весь проект"}
                 onClick={() => setIsCommonAgencyOpen((prev) => !prev)}
               >
                 {isCommonAgencyOpen ? "-" : "+"}

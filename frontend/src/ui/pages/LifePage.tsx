@@ -7,6 +7,13 @@ type LifeProject = {
   project_id: number
   title: string
   organization?: string | null
+  source_month_key: string
+  source_month_label: string
+  source_kind: "current" | "reserve"
+  opening_balance: number
+  inflow_in_source_month: number
+  used_for_life: number
+  closing_balance: number
   received_last_month: number
   to_life: number
   to_savings: number
@@ -21,6 +28,7 @@ type LifeResponse = {
   target_amount: number
   life_covered: number
   life_gap: number
+  reserve_used: number
   savings_total: number
   projects: LifeProject[]
 }
@@ -115,46 +123,52 @@ export default function LifePage() {
     <div className="grid">
       {data && (
         <>
-          <div className="dashboard-strip life-kpi-strip">
-            <div className="kpi-card">
-              <div className="muted">Период</div>
-              <button
-                type="button"
-                className="kpi-value life-period-button"
-                onClick={() => openNativePicker(monthPickerRef.current, true)}
-              >
-                {monthLabelRu(selectedMonth)}
-              </button>
-              <input
-                ref={monthPickerRef}
-                className="timeline-month-picker-hidden"
-                type="month"
-                value={selectedMonth}
-                onChange={(e) => setSelectedMonth(e.target.value)}
-              />
-            </div>
-            <div className="kpi-card">
-              <div className="muted">Цель на месяц</div>
-              <input
-                className="kpi-value-input"
-                value={targetRaw}
-                onChange={(e) => setTargetRaw(e.target.value)}
-                onBlur={(e) => commitTarget(e.currentTarget.value)}
-                onKeyDown={(e) => {
-                  if (e.key !== "Enter") return
-                  e.preventDefault()
-                  commitTarget(e.currentTarget.value)
-                }}
-                aria-label="Цель на месяц"
-              />
-            </div>
-            <div className="kpi-card">
-              <div className="muted">Покрыто</div>
-              <div className="kpi-value ok">{toMoney(data.life_covered)}</div>
-            </div>
-            <div className="kpi-card">
-              <div className="muted">В копилку</div>
-              <div className="kpi-value accent">{toMoney(data.savings_total)}</div>
+          <div className="panel top-panel">
+            <div className="dashboard-strip life-kpi-strip">
+              <div className="kpi-card">
+                <div className="muted">Период</div>
+                <button
+                  type="button"
+                  className="kpi-value life-period-button"
+                  onClick={() => openNativePicker(monthPickerRef.current, true)}
+                >
+                  {monthLabelRu(selectedMonth)}
+                </button>
+                <input
+                  ref={monthPickerRef}
+                  className="timeline-month-picker-hidden"
+                  type="month"
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(e.target.value)}
+                />
+              </div>
+              <div className="kpi-card">
+                <div className="muted">Цель на месяц</div>
+                <input
+                  className="kpi-value-input"
+                  value={targetRaw}
+                  onChange={(e) => setTargetRaw(e.target.value)}
+                  onBlur={(e) => commitTarget(e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter") return
+                    e.preventDefault()
+                    commitTarget(e.currentTarget.value)
+                  }}
+                  aria-label="Цель на месяц"
+                />
+              </div>
+              <div className="kpi-card">
+                <div className="muted">Покрыто</div>
+                <div className="kpi-value ok">{toMoney(data.life_covered)}</div>
+              </div>
+              <div className="kpi-card">
+                <div className="muted">Заначка</div>
+                <div className="kpi-value">{toMoney(data.reserve_used)}</div>
+              </div>
+              <div className="kpi-card">
+                <div className="muted">В копилку</div>
+                <div className="kpi-value accent">{toMoney(data.savings_total)}</div>
+              </div>
             </div>
           </div>
 
@@ -174,24 +188,28 @@ export default function LifePage() {
                   <tr>
                     <th>Проект</th>
                     <th>Организация</th>
-                    <th>Получено за месяц</th>
-                    <th>На жизнь</th>
-                    <th>В копилку</th>
+                    <th>Источник</th>
+                    <th>Было в копилке</th>
+                    <th>в т.ч. поступление прошлого месяца</th>
+                    <th>Взято на жизнь</th>
+                    <th>Остаток копилки</th>
                   </tr>
                 </thead>
                 <tbody>
                   {data.projects.map((p) => (
-                    <tr key={p.project_id}>
+                    <tr key={`${p.project_id}-${p.source_month_key}-${p.source_kind}`}>
                       <td>{p.title}</td>
                       <td>{p.organization || "—"}</td>
-                      <td>{toMoney(p.received_last_month)}</td>
-                      <td>{toMoney(p.to_life)}</td>
-                      <td>{toMoney(p.to_savings)}</td>
+                      <td>{`${p.source_month_label} (${p.source_kind === "current" ? "текущий" : "заначка"})`}</td>
+                      <td>{toMoney(p.opening_balance)}</td>
+                      <td>{p.source_kind === "reserve" ? "—" : toMoney(p.inflow_in_source_month)}</td>
+                      <td>{toMoney(p.used_for_life)}</td>
+                      <td>{toMoney(p.closing_balance)}</td>
                     </tr>
                   ))}
                   {data.projects.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="muted">За выбранный месяц поступлений по проектам нет</td>
+                      <td colSpan={7} className="muted">За выбранный месяц источников для жизни нет</td>
                     </tr>
                   )}
                 </tbody>

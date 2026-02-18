@@ -4,7 +4,7 @@ from collections import defaultdict
 from datetime import date, datetime
 from typing import DefaultDict
 from sqlalchemy.orm import Session
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func
 
 from .models import Project, ExpenseGroup, ExpenseItem, ClientPaymentsPlan, ClientPaymentsFact
 
@@ -21,6 +21,46 @@ def _item_base_total(item: ExpenseItem) -> float:
         unit = float(item.unit_price_base)
         base = unit if qty == 0 else qty * unit
     return base
+
+
+def _effective_parent_items(items: list[ExpenseItem]) -> list[dict]:
+    # Effective expense model:
+    # - Only top-level (parent) rows are accounting rows.
+    # - If a parent has child rows, parent amounts are derived from children.
+    # - Parent date is explicit; if empty -> fallback to latest child date.
+    by_id: dict[int, ExpenseItem] = {int(it.id): it for it in items}
+    children_by_parent: DefaultDict[int, list[ExpenseItem]] = defaultdict(list)
+    top_level: list[ExpenseItem] = []
+
+    for it in items:
+        parent_id = int(it.parent_item_id) if it.parent_item_id is not None else None
+        if parent_id is not None and parent_id in by_id:
+            children_by_parent[parent_id].append(it)
+        else:
+            top_level.append(it)
+
+    out: list[dict] = []
+    for parent in top_level:
+        children = children_by_parent.get(int(parent.id), [])
+        if children:
+            base_total = sum(_item_base_total(ch) for ch in children)
+            extra_total = sum(float(ch.extra_profit_amount or 0.0) for ch in children if ch.extra_profit_enabled)
+            child_dates = [ch.planned_pay_date for ch in children if ch.planned_pay_date is not None]
+            planned_pay_date = parent.planned_pay_date or (max(child_dates) if child_dates else None)
+        else:
+            base_total = _item_base_total(parent)
+            extra_total = float(parent.extra_profit_amount or 0.0) if parent.extra_profit_enabled else 0.0
+            planned_pay_date = parent.planned_pay_date
+
+        out.append(
+            {
+                "item": parent,
+                "base_total": float(base_total),
+                "extra_total": float(extra_total),
+                "planned_pay_date": planned_pay_date,
+            }
+        )
+    return out
 
 def project_pocket_monthly_components(db: Session, project: Project, as_of: date) -> dict[str, dict[str, float]]:
     # Cash model:
@@ -62,20 +102,19 @@ def project_pocket_monthly_components(db: Session, project: Project, as_of: date
         events_pay[pay_date] += amount
         events_agency_claim[pay_date] += amount * agency_rate
 
-    items = db.execute(
+    all_items = db.execute(
         select(ExpenseItem).where(ExpenseItem.project_id == project.id)
     ).scalars().all()
-    for item in items:
-        due_date = item.planned_pay_date or project_created
+    for eff in _effective_parent_items(all_items):
+        due_date = eff["planned_pay_date"] or project_created
         if due_date > as_of:
             continue
-        base = _item_base_total(item)
+        base = float(eff["base_total"])
         if base > 0:
             events_expense[due_date] += base
-        if item.extra_profit_enabled:
-            extra = float(item.extra_profit_amount or 0.0)
-            if extra > 0:
-                events_extra_claim[due_date] += extra
+        extra = float(eff["extra_total"])
+        if extra > 0:
+            events_extra_claim[due_date] += extra
 
     all_dates = sorted(
         set(events_pay.keys())
@@ -120,12 +159,12 @@ def project_pocket_monthly_components(db: Session, project: Project, as_of: date
 
 def compute_project_financials(db: Session, project_id: int) -> dict:
     # expenses_total = sum(total_cost_internal) where total_cost_internal = base_total + extra_profit_amount
-    items = db.execute(select(ExpenseItem).where(ExpenseItem.project_id == project_id)).scalars().all()
+    all_items = db.execute(select(ExpenseItem).where(ExpenseItem.project_id == project_id)).scalars().all()
     expenses_total = 0.0
     extra_profit_total = 0.0
-    for it in items:
-        base = _item_base_total(it)
-        extra = float(it.extra_profit_amount) if it.extra_profit_enabled else 0.0
+    for eff in _effective_parent_items(all_items):
+        base = float(eff["base_total"])
+        extra = float(eff["extra_total"])
         expenses_total += base + extra
         extra_profit_total += extra
 
@@ -149,24 +188,19 @@ def compute_project_financials(db: Session, project_id: int) -> dict:
 
 def expense_breakdown_to_date(db: Session, project_id: int, at: date) -> tuple[float, float]:
     # "Потрачено" = базовые расходы. "Доп прибыль" считаем отдельно.
-    items = db.execute(
-        select(ExpenseItem).where(
-            ExpenseItem.project_id == project_id,
-            or_(ExpenseItem.planned_pay_date <= at, ExpenseItem.planned_pay_date.is_(None)),
-        )
+    all_items = db.execute(
+        select(ExpenseItem).where(ExpenseItem.project_id == project_id)
     ).scalars().all()
 
     spent_base = 0.0
     extra_profit = 0.0
-    for it in items:
-        base = float(it.base_total or 0.0)
-        if it.mode.value == "QTY_PRICE" and it.qty is not None and it.unit_price_base is not None:
-            qty = float(it.qty)
-            unit = float(it.unit_price_base)
-            base = unit if qty == 0 else qty * unit
+    for eff in _effective_parent_items(all_items):
+        due_date = eff["planned_pay_date"]
+        if due_date is not None and due_date > at:
+            continue
+        base = float(eff["base_total"])
         spent_base += base
-        if it.extra_profit_enabled:
-            extra_profit += float(it.extra_profit_amount or 0.0)
+        extra_profit += float(eff["extra_total"])
 
     return spent_base, extra_profit
 

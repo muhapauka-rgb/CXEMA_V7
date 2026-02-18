@@ -72,6 +72,13 @@ def _ensure_sqlite_columns() -> None:
                     "ADD COLUMN include_in_estimate BOOLEAN NOT NULL DEFAULT 1"
                 )
             )
+        if "parent_item_id" not in columns:
+            conn.execute(
+                text(
+                    "ALTER TABLE expense_items "
+                    "ADD COLUMN parent_item_id INTEGER"
+                )
+            )
 
 
 _ensure_sqlite_columns()
@@ -113,6 +120,33 @@ def _refresh_item_calculated_base(item: ExpenseItem) -> None:
         qty = float(item.qty)
         unit = float(item.unit_price_base)
         item.base_total = unit if qty == 0 else qty * unit
+
+
+def _validate_parent_item(
+    db: Session,
+    project_id: int,
+    group_id: int,
+    parent_item_id: int | None,
+    current_item_id: int | None = None,
+) -> None:
+    if parent_item_id is None:
+        return
+    if current_item_id is not None and parent_item_id == current_item_id:
+        raise HTTPException(422, "PARENT_ITEM_SELF_REF")
+    parent = db.get(ExpenseItem, parent_item_id)
+    if not parent or parent.project_id != project_id:
+        raise HTTPException(422, "PARENT_ITEM_NOT_FOUND")
+    if parent.group_id != group_id:
+        raise HTTPException(422, "PARENT_ITEM_GROUP_MISMATCH")
+    # One nesting level: only top-level rows can be parents.
+    if parent.parent_item_id is not None:
+        raise HTTPException(422, "PARENT_ITEM_MUST_BE_TOP_LEVEL")
+    if current_item_id is not None:
+        has_children = db.execute(
+            select(ExpenseItem.id).where(ExpenseItem.parent_item_id == current_item_id).limit(1)
+        ).first() is not None
+        if has_children:
+            raise HTTPException(422, "ITEM_WITH_SUBITEMS_CANNOT_BE_SUBITEM")
 
 @router.get("", response_model=list[ProjectOut])
 def list_projects(db: Session = Depends(get_db)):
@@ -222,17 +256,24 @@ def create_item(project_id: int, payload: ItemCreate, db: Session = Depends(get_
     _get_project_or_404(db, project_id)
     _get_group_or_404(db, project_id, payload.group_id)
     mode = _parse_mode(payload.mode)
+    _validate_parent_item(
+        db=db,
+        project_id=project_id,
+        group_id=payload.group_id,
+        parent_item_id=payload.parent_item_id,
+    )
 
     it = ExpenseItem(
         stable_item_id=gen_stable_id("item"),
         project_id=project_id,
         group_id=payload.group_id,
+        parent_item_id=payload.parent_item_id,
         title=payload.title,
         mode=mode,
         qty=payload.qty,
         unit_price_base=payload.unit_price_base,
         base_total=payload.base_total,
-        include_in_estimate=payload.include_in_estimate,
+        include_in_estimate=payload.include_in_estimate if payload.parent_item_id is None else False,
         extra_profit_enabled=payload.extra_profit_enabled,
         extra_profit_amount=payload.extra_profit_amount,
         planned_pay_date=payload.planned_pay_date,
@@ -247,15 +288,33 @@ def create_item(project_id: int, payload: ItemCreate, db: Session = Depends(get_
 def update_item(project_id: int, item_id: int, payload: ItemUpdate, db: Session = Depends(get_db)):
     it = _get_item_or_404(db, project_id, item_id)
     data = payload.model_dump(exclude_unset=True)
+    has_children = db.execute(
+        select(ExpenseItem.id).where(ExpenseItem.parent_item_id == item_id).limit(1)
+    ).first() is not None
 
     if "group_id" in data and data["group_id"] is not None:
         _get_group_or_404(db, project_id, data["group_id"])
+        if has_children and int(data["group_id"]) != it.group_id:
+            raise HTTPException(422, "ITEM_WITH_SUBITEMS_CANNOT_CHANGE_GROUP")
 
     if "mode" in data and data["mode"] is not None:
         data["mode"] = _parse_mode(data["mode"])
 
+    target_group_id = int(data["group_id"]) if data.get("group_id") is not None else int(it.group_id)
+    target_parent_item_id = data["parent_item_id"] if "parent_item_id" in data else it.parent_item_id
+    _validate_parent_item(
+        db=db,
+        project_id=project_id,
+        group_id=target_group_id,
+        parent_item_id=target_parent_item_id,
+        current_item_id=item_id,
+    )
+
     for k, v in data.items():
         setattr(it, k, v)
+
+    if it.parent_item_id is not None:
+        it.include_in_estimate = False
 
     _refresh_item_calculated_base(it)
     db.commit()
@@ -265,6 +324,11 @@ def update_item(project_id: int, item_id: int, payload: ItemUpdate, db: Session 
 @router.delete("/{project_id}/items/{item_id}")
 def delete_item(project_id: int, item_id: int, db: Session = Depends(get_db)):
     it = _get_item_or_404(db, project_id, item_id)
+    subitems = db.execute(
+        select(ExpenseItem).where(ExpenseItem.parent_item_id == item_id)
+    ).scalars().all()
+    for subitem in subitems:
+        db.delete(subitem)
     db.delete(it)
     db.commit()
     return {"deleted": True}
