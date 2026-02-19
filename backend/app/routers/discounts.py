@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
@@ -17,7 +18,7 @@ router = APIRouter(prefix="/api/discounts", tags=["discounts"])
 
 @router.get("/summary", response_model=DiscountSummaryOut)
 def discount_summary(
-    as_of: date | None = Query(default=None),
+    as_of: Optional[date] = Query(default=None),
     db: Session = Depends(get_db),
 ):
     if as_of is None:
