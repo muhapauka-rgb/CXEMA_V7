@@ -238,12 +238,32 @@ class GoogleAuthCallbackOut(BaseModel):
     connected: bool
     message: str
 
+
+class AppSettingsOut(BaseModel):
+    id: int
+    usn_mode: str
+    usn_rate_percent: float
+    backup_frequency: str
+    last_backup_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AppSettingsUpdate(BaseModel):
+    usn_mode: Optional[str] = None
+    usn_rate_percent: Optional[float] = Field(default=None, ge=0)
+    backup_frequency: Optional[str] = None
+
 class ProjectComputed(BaseModel):
     project_id: int
     expenses_total: float
     agency_fee: float
     extra_profit_total: float
     discount_total: float = 0.0
+    usn_tax: float = 0.0
     in_pocket: float
     diff: float
 

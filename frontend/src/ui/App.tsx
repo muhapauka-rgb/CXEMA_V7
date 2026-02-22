@@ -4,7 +4,7 @@ import OverviewPage from './pages/OverviewPage'
 import ProjectPage from './pages/ProjectPage'
 import SettingsPage from './pages/SettingsPage'
 import LifePage from './pages/LifePage'
-import { apiGet } from './api'
+import { API_BASE, apiGet } from './api'
 
 type ThemeMode = "dark" | "light"
 
@@ -43,34 +43,28 @@ function normalizeHexColor(value: string): string | null {
 function GearIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z" />
-      <path d="M19.4 12a7.6 7.6 0 0 0-.1-1.1l2-1.6-2-3.5-2.4 1a7.7 7.7 0 0 0-1.9-1.1l-.4-2.5H9.4L9 5.7c-.7.2-1.3.6-1.9 1.1l-2.4-1-2 3.5 2 1.6c-.1.4-.1.7-.1 1.1s0 .7.1 1.1l-2 1.6 2 3.5 2.4-1c.6.5 1.2.9 1.9 1.1l.4 2.5h5.2l.4-2.5c.7-.2 1.3-.6 1.9-1.1l2.4 1 2-3.5-2-1.6c.1-.4.1-.7.1-1.1Z" />
+      <path d="M19.4 13.5c.04-.33.1-.67.1-1s-.06-.67-.1-1l2.12-1.66a.52.52 0 0 0 .12-.65l-2-3.46a.5.5 0 0 0-.6-.22l-2.49 1a7.23 7.23 0 0 0-1.73-1l-.38-2.65A.5.5 0 0 0 14 2h-4a.5.5 0 0 0-.49.42l-.38 2.65c-.62.25-1.2.58-1.73 1l-2.49-1a.5.5 0 0 0-.6.22l-2 3.46a.5.5 0 0 0 .12.65L4.6 11.5c-.04.33-.1.67-.1 1s.06.67.1 1L2.48 15.16a.52.52 0 0 0-.12.65l2 3.46a.5.5 0 0 0 .6.22l2.49-1c.53.42 1.11.76 1.73 1l.38 2.65A.5.5 0 0 0 10 22h4a.5.5 0 0 0 .49-.42l.38-2.65c.62-.25 1.2-.58 1.73-1l2.49 1a.5.5 0 0 0 .6-.22l2-3.46a.5.5 0 0 0-.12-.65l-2.17-1.1ZM12 16a4 4 0 1 1 0-8 4 4 0 0 1 0 8Z" />
     </svg>
   )
 }
 
-function ThemeIcon({ theme }: { theme: ThemeMode }) {
-  if (theme === "light") {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M12 3v2.2M12 18.8V21M4.2 12H3M21 12h-1.2M6.1 6.1 4.6 4.6M19.4 19.4l-1.5-1.5M17.9 6.1l1.5-1.5M4.6 19.4l1.5-1.5" />
-        <circle cx="12" cy="12" r="4.2" />
-      </svg>
-    )
-  }
-
+function VisualSettingsIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M21 12.8A7.4 7.4 0 0 1 11.2 3a6.8 6.8 0 1 0 9.8 9.8Z" />
+      <path d="M3 7h18" />
+      <path d="M3 17h18" />
+      <circle cx="8" cy="7" r="3" />
+      <circle cx="16" cy="17" r="3" />
     </svg>
   )
 }
 
-function AccentIcon() {
+function ExportRegistryIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 3c4.9 0 9 3.6 9 8.2 0 2.7-1.5 4.3-3.4 5.3-1.2.6-1.8 1.7-1.8 3v.7H8.2v-.7c0-1.3-.6-2.4-1.8-3C4.5 15.5 3 13.9 3 11.2 3 6.6 7.1 3 12 3Z" />
-      <path d="M9 21h6" />
+      <path d="M7 10v7a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-7" />
+      <path d="M12 15V4" />
+      <path d="m8.8 7.2 3.2-3.2 3.2 3.2" />
     </svg>
   )
 }
@@ -109,9 +103,11 @@ export default function App() {
     const saved = localStorage.getItem(ACCENT_STORAGE_KEY)
     return normalizeHexColor(saved || "") || DEFAULT_ACCENT
   })
-  const [isAccentOpen, setIsAccentOpen] = useState(false)
+  const [isVisualOpen, setIsVisualOpen] = useState(false)
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [accentInput, setAccentInput] = useState(accent)
   const [isDiscountsOpen, setIsDiscountsOpen] = useState(false)
+  const [isExportingRegistry, setIsExportingRegistry] = useState(false)
   const [discountsAsOf, setDiscountsAsOf] = useState(() => new Date().toISOString().slice(0, 10))
   const [discountsData, setDiscountsData] = useState<DiscountSummary | null>(null)
   const [discountsLoading, setDiscountsLoading] = useState(false)
@@ -129,16 +125,17 @@ export default function App() {
   }, [accent])
 
   useEffect(() => {
-    if (!isAccentOpen && !isDiscountsOpen) return
+    if (!isVisualOpen && !isDiscountsOpen && !isSettingsOpen) return
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        setIsAccentOpen(false)
+        setIsVisualOpen(false)
         setIsDiscountsOpen(false)
+        setIsSettingsOpen(false)
       }
     }
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
-  }, [isAccentOpen, isDiscountsOpen])
+  }, [isVisualOpen, isDiscountsOpen, isSettingsOpen])
 
   async function loadDiscounts(asOf = discountsAsOf) {
     try {
@@ -153,19 +150,40 @@ export default function App() {
     }
   }
 
-  function toggleTheme() {
-    setTheme((prev) => (prev === "light" ? "dark" : "light"))
-  }
-
   function applyAccent(value: string) {
     const next = normalizeHexColor(value)
     setAccentInput(value)
     if (next) setAccent(next)
   }
 
+  async function exportRegistryExcel() {
+    try {
+      setIsExportingRegistry(true)
+      const res = await fetch(`${API_BASE}/api/exports/excel`)
+      if (!res.ok) throw new Error(await res.text())
+      const blob = await res.blob()
+      const contentDisposition = res.headers.get("Content-Disposition") || ""
+      const m = /filename=\"([^\"]+)\"/.exec(contentDisposition)
+      const filename = m?.[1] || `cxema-registry-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.xlsx`
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      const msg = String(e)
+      window.alert(`Не удалось выгрузить Excel: ${msg}`)
+    } finally {
+      setIsExportingRegistry(false)
+    }
+  }
+
   return (
     <>
-      <div className={isAccentOpen || isDiscountsOpen ? "page-content-muted" : ""}>
+      <div className={isVisualOpen || isDiscountsOpen || isSettingsOpen ? "page-content-muted" : ""}>
         <div className="nav">
           <div className="brand"><CxemaWordmark /> <span className="v7">V7</span></div>
           <NavLink to="/" className={navClass}>Проекты</NavLink>
@@ -174,22 +192,37 @@ export default function App() {
           <button
             className="btn"
             onClick={() => {
-              setIsAccentOpen(false)
+              setIsVisualOpen(false)
+              setIsSettingsOpen(false)
               setIsDiscountsOpen(true)
               void loadDiscounts(discountsAsOf)
             }}
           >
             Скидки
           </button>
-          <button className="btn icon-btn icon-stroke" onClick={toggleTheme} aria-label="Тема" title="Тема">
-            <ThemeIcon theme={theme} />
+          <button
+            className="btn icon-btn icon-stroke"
+            aria-label="Выгрузить сводную базу в Excel"
+            onClick={() => void exportRegistryExcel()}
+            disabled={isExportingRegistry}
+            title="Выгрузить базу в Excel"
+          >
+            <ExportRegistryIcon />
           </button>
-          <button className="btn icon-btn icon-stroke" onClick={() => setIsAccentOpen(true)} aria-label="Акцент" title="Акцент">
-            <AccentIcon />
+          <button className="btn icon-btn icon-stroke" onClick={() => setIsVisualOpen(true)} aria-label="Визуализация">
+            <VisualSettingsIcon />
           </button>
-          <NavLink to="/settings" className={({ isActive }) => `btn nav-link nav-gear icon-stroke${isActive ? " active" : ""}`} aria-label="Настройки">
+          <button
+            className="btn icon-btn settings-icon-btn"
+            aria-label="Настройки"
+            onClick={() => {
+              setIsVisualOpen(false)
+              setIsDiscountsOpen(false)
+              setIsSettingsOpen(true)
+            }}
+          >
             <GearIcon />
-          </NavLink>
+          </button>
         </div>
 
         <div className="container">
@@ -203,31 +236,51 @@ export default function App() {
         </div>
       </div>
 
-      {isAccentOpen && (
+      {isVisualOpen && (
         <div
           className="modal-backdrop"
-          onClick={() => setIsAccentOpen(false)}
+          onClick={() => setIsVisualOpen(false)}
         >
           <div className="panel project-settings-panel project-settings-modal accent-modal" onClick={(e) => e.stopPropagation()}>
             <div className="row" style={{ justifyContent: "space-between" }}>
-              <div className="h1">Акцентный цвет</div>
-              <button className="btn" onClick={() => setIsAccentOpen(false)}>Закрыть</button>
+              <div className="h1">Визуализация</div>
+              <button className="btn icon-btn modal-close-btn" aria-label="Закрыть окно" onClick={() => setIsVisualOpen(false)}>×</button>
             </div>
 
-            <div className="row" style={{ marginTop: 12, alignItems: "center" }}>
-              <input
-                className="input accent-color-input"
-                type="color"
-                value={normalizeHexColor(accentInput) || accent}
-                onChange={(e) => applyAccent(e.target.value)}
-              />
-              <input
-                className="input accent-hex-input"
-                value={accentInput}
-                onChange={(e) => applyAccent(e.target.value)}
-              />
-              <button className="btn" onClick={() => setAccent(DEFAULT_ACCENT)}>Сброс</button>
+            <div className="grid" style={{ marginTop: 12 }}>
+              <div className="muted" style={{ color: "var(--text)", fontWeight: 700 }}>Тема</div>
+              <div className="row">
+                <button className={`btn ${theme === "dark" ? "tab-active" : ""}`} onClick={() => setTheme("dark")}>Черная</button>
+                <button className={`btn ${theme === "light" ? "tab-active" : ""}`} onClick={() => setTheme("light")}>Белая</button>
+              </div>
+
+              <div className="muted" style={{ color: "var(--text)", fontWeight: 700 }}>Акцент</div>
+              <div className="row" style={{ alignItems: "center" }}>
+                <input
+                  className="input accent-color-input"
+                  type="color"
+                  value={normalizeHexColor(accentInput) || accent}
+                  onChange={(e) => applyAccent(e.target.value)}
+                />
+                <input
+                  className="input accent-hex-input"
+                  value={accentInput}
+                  onChange={(e) => applyAccent(e.target.value)}
+                />
+                <button className="btn" onClick={() => setAccent(DEFAULT_ACCENT)}>Сброс</button>
+              </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {isSettingsOpen && (
+        <div
+          className="modal-backdrop"
+          onClick={() => setIsSettingsOpen(false)}
+        >
+          <div className="panel project-settings-panel project-settings-modal" onClick={(e) => e.stopPropagation()}>
+            <SettingsPage asModal onClose={() => setIsSettingsOpen(false)} />
           </div>
         </div>
       )}
@@ -240,7 +293,7 @@ export default function App() {
           <div className="panel project-settings-panel project-settings-modal discounts-modal" onClick={(e) => e.stopPropagation()}>
             <div className="row" style={{ justifyContent: "space-between" }}>
               <div className="h1">Скидки</div>
-              <button className="btn" onClick={() => setIsDiscountsOpen(false)}>Закрыть</button>
+              <button className="btn icon-btn modal-close-btn" aria-label="Закрыть окно" onClick={() => setIsDiscountsOpen(false)}>×</button>
             </div>
 
             <div className="row" style={{ marginTop: 10 }}>

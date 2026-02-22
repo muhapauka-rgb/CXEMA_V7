@@ -2,11 +2,20 @@ from __future__ import annotations
 import uuid
 from collections import defaultdict
 from datetime import date, datetime
-from typing import DefaultDict
+from typing import DefaultDict, Optional, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func
 
-from .models import Project, ExpenseGroup, ExpenseItem, ClientPaymentsPlan, ClientPaymentsFact, ClientBillingAdjustment
+from .models import (
+    Project,
+    ExpenseGroup,
+    ExpenseItem,
+    ClientPaymentsPlan,
+    ClientPaymentsFact,
+    ClientBillingAdjustment,
+    AppSettings,
+    UsnMode,
+)
 
 def gen_stable_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:16]}"
@@ -23,13 +32,41 @@ def _item_base_total(item: ExpenseItem) -> float:
     return base
 
 
+def _symmetric_percent_part(total: float, percent: float) -> float:
+    gross = float(total or 0.0)
+    p = float(percent or 0.0)
+    if gross <= 0 or p <= 0:
+        return 0.0
+    return gross * (p / 100.0)
+
+
+def _normalize_usn_mode(mode_raw: Optional[str]) -> str:
+    value = str(mode_raw or "").strip().upper()
+    return "LEGAL" if value == "LEGAL" else "OPERATIONAL"
+
+
+def usn_amount_from_base(tax_base: float, rate_percent: float) -> float:
+    base = float(tax_base or 0.0)
+    rate = float(rate_percent or 0.0)
+    if base <= 0 or rate <= 0:
+        return 0.0
+    return base * (rate / 100.0)
+
+
+def get_global_usn_settings(db: Session) -> Tuple[str, float]:
+    row = db.get(AppSettings, 1)
+    if not row:
+        return "OPERATIONAL", 6.0
+    return _normalize_usn_mode(row.usn_mode.value if isinstance(row.usn_mode, UsnMode) else str(row.usn_mode)), float(row.usn_rate_percent or 0.0)
+
+
 def _effective_parent_items(
     items: list[ExpenseItem],
     discount_by_item_id: dict[int, tuple[bool, float]] | None = None,
 ) -> list[dict]:
     # Effective expense model:
     # - Only top-level (parent) rows are accounting rows.
-    # - If a parent has child rows, parent amounts are derived from children.
+    # - Parent amounts stay editable/independent even when child rows exist.
     # - Parent date is explicit; if empty -> fallback to latest child date.
     by_id: dict[int, ExpenseItem] = {int(it.id): it for it in items}
     children_by_parent: DefaultDict[int, list[ExpenseItem]] = defaultdict(list)
@@ -46,14 +83,17 @@ def _effective_parent_items(
     for parent in top_level:
         children = children_by_parent.get(int(parent.id), [])
         discount_enabled, discount_amount = (discount_by_item_id or {}).get(int(parent.id), (False, 0.0))
+        parent_extra = float(parent.extra_profit_amount or 0.0) if parent.extra_profit_enabled else 0.0
         if children:
-            base_total = sum(_item_base_total(ch) for ch in children)
-            extra_total = sum(float(ch.extra_profit_amount or 0.0) for ch in children if ch.extra_profit_enabled)
+            # Parent row values stay editable and independent from child rows.
+            # Children are detail rows; parent date may fallback to latest child date when empty.
+            base_total = _item_base_total(parent)
+            extra_total = parent_extra
             child_dates = [ch.planned_pay_date for ch in children if ch.planned_pay_date is not None]
             planned_pay_date = parent.planned_pay_date or (max(child_dates) if child_dates else None)
         else:
             base_total = _item_base_total(parent)
-            extra_total = float(parent.extra_profit_amount or 0.0) if parent.extra_profit_enabled else 0.0
+            extra_total = parent_extra
             planned_pay_date = parent.planned_pay_date
         discount_total = float(discount_amount) if discount_enabled else 0.0
         effective_total = float(base_total) + float(extra_total) - discount_total
@@ -85,13 +125,24 @@ def effective_project_expense_rows(db: Session, project_id: int) -> list[dict]:
     discount_map = _discount_map_for_items(db, [int(it.id) for it in all_items])
     return _effective_parent_items(all_items, discount_map)
 
-def project_pocket_monthly_components(db: Session, project: Project, as_of: date) -> dict[str, dict[str, float]]:
+def project_pocket_monthly_components(
+    db: Session,
+    project: Project,
+    as_of: date,
+    usn_mode: Optional[str] = None,
+    usn_rate_percent: Optional[float] = None,
+) -> dict[str, dict[str, float]]:
     # Cash model:
-    # payments -> wallet, expenses first, then agency/extra claims.
+    # payments -> wallet, expenses first, then tax, then agency/extra claims.
     events_pay: DefaultDict[date, float] = defaultdict(float)
     events_expense: DefaultDict[date, float] = defaultdict(float)
+    events_tax_claim: DefaultDict[date, float] = defaultdict(float)
     events_agency_claim: DefaultDict[date, float] = defaultdict(float)
     events_extra_claim: DefaultDict[date, float] = defaultdict(float)
+
+    default_mode, default_rate = get_global_usn_settings(db)
+    mode = _normalize_usn_mode(usn_mode) if usn_mode is not None else default_mode
+    usn_rate = float(usn_rate_percent) if usn_rate_percent is not None else default_rate
 
     payments_fact = db.execute(
         select(ClientPaymentsFact).where(
@@ -106,7 +157,7 @@ def project_pocket_monthly_components(db: Session, project: Project, as_of: date
         )
     ).scalars().all()
 
-    agency_rate = float(project.agency_fee_percent or 0.0) / 100.0
+    agency_percent = float(project.agency_fee_percent or 0.0)
     project_created = project.created_at.date()
 
     for rec in payments_fact:
@@ -115,7 +166,9 @@ def project_pocket_monthly_components(db: Session, project: Project, as_of: date
         if amount <= 0:
             continue
         events_pay[pay_date] += amount
-        events_agency_claim[pay_date] += amount * agency_rate
+        events_agency_claim[pay_date] += _symmetric_percent_part(amount, agency_percent)
+        if mode == "LEGAL":
+            events_tax_claim[pay_date] += usn_amount_from_base(amount, usn_rate)
 
     for rec in payments_plan_due:
         pay_date = rec.pay_date
@@ -123,7 +176,9 @@ def project_pocket_monthly_components(db: Session, project: Project, as_of: date
         if amount <= 0:
             continue
         events_pay[pay_date] += amount
-        events_agency_claim[pay_date] += amount * agency_rate
+        events_agency_claim[pay_date] += _symmetric_percent_part(amount, agency_percent)
+        if mode == "LEGAL":
+            events_tax_claim[pay_date] += usn_amount_from_base(amount, usn_rate)
 
     all_items = db.execute(
         select(ExpenseItem).where(ExpenseItem.project_id == project.id)
@@ -141,9 +196,17 @@ def project_pocket_monthly_components(db: Session, project: Project, as_of: date
         if extra > 0:
             events_extra_claim[due_date] += extra
 
+    if mode == "OPERATIONAL":
+        tax_dates = set(events_expense.keys()) | set(events_agency_claim.keys()) | set(events_extra_claim.keys())
+        for d in tax_dates:
+            taxable = float(events_expense[d]) + float(events_agency_claim[d]) + float(events_extra_claim[d])
+            if taxable > 0:
+                events_tax_claim[d] += usn_amount_from_base(taxable, usn_rate)
+
     all_dates = sorted(
         set(events_pay.keys())
         | set(events_expense.keys())
+        | set(events_tax_claim.keys())
         | set(events_agency_claim.keys())
         | set(events_extra_claim.keys())
     )
@@ -152,19 +215,27 @@ def project_pocket_monthly_components(db: Session, project: Project, as_of: date
 
     wallet = 0.0
     pending_expense = 0.0
+    pending_tax = 0.0
     pending_agency = 0.0
     pending_extra = 0.0
-    out: DefaultDict[str, dict[str, float]] = defaultdict(lambda: {"agency": 0.0, "extra": 0.0, "in_pocket": 0.0})
+    out: DefaultDict[str, dict[str, float]] = defaultdict(
+        lambda: {"agency": 0.0, "extra": 0.0, "tax": 0.0, "in_pocket": 0.0}
+    )
 
     for d in all_dates:
         wallet += events_pay[d]
         pending_expense += events_expense[d]
+        pending_tax += events_tax_claim[d]
         pending_agency += events_agency_claim[d]
         pending_extra += events_extra_claim[d]
 
         paid_expense = min(wallet, pending_expense)
         wallet -= paid_expense
         pending_expense -= paid_expense
+
+        paid_tax = min(wallet, pending_tax)
+        wallet -= paid_tax
+        pending_tax -= paid_tax
 
         paid_agency = min(wallet, pending_agency)
         wallet -= paid_agency
@@ -174,11 +245,12 @@ def project_pocket_monthly_components(db: Session, project: Project, as_of: date
         wallet -= paid_extra
         pending_extra -= paid_extra
 
-        if paid_agency > 0 or paid_extra > 0:
+        if paid_agency > 0 or paid_extra > 0 or paid_tax > 0:
             key = _month_key(d)
             out[key]["agency"] += paid_agency
             out[key]["extra"] += paid_extra
-            out[key]["in_pocket"] += paid_agency + paid_extra
+            out[key]["tax"] += paid_tax
+            out[key]["in_pocket"] += paid_agency + paid_extra - paid_tax
 
     return dict(out)
 
@@ -209,21 +281,37 @@ def compute_project_financials(db: Session, project_id: int) -> dict:
         }
 
     project_total = float(project.project_price_total or 0.0)
-    agency_fee = project_total * (float(project.agency_fee_percent) / 100.0)
-    in_pocket = agency_fee + extra_profit_total
-    diff = project_total - expenses_total
+    agency_fee = _symmetric_percent_part(project_total, float(project.agency_fee_percent or 0.0))
+    usn_mode, usn_rate = get_global_usn_settings(db)
+
+    received_all = float(
+        db.execute(
+            select(func.coalesce(func.sum(ClientPaymentsFact.amount), 0.0)).where(ClientPaymentsFact.project_id == project_id)
+        ).scalar_one()
+    ) + float(
+        db.execute(
+            select(func.coalesce(func.sum(ClientPaymentsPlan.amount), 0.0)).where(ClientPaymentsPlan.project_id == project_id)
+        ).scalar_one()
+    )
+
+    usn_base = received_all if usn_mode == "LEGAL" else (expenses_total + agency_fee)
+    usn_tax = usn_amount_from_base(usn_base, usn_rate)
+    expenses_with_tax = expenses_total + usn_tax
+    in_pocket = agency_fee + extra_profit_total - discount_total
+    diff = project_total - (expenses_total + agency_fee + usn_tax)
 
     return {
         "project_id": project_id,
-        "expenses_total": round(expenses_total, 2),
+        "expenses_total": round(expenses_with_tax, 2),
         "agency_fee": round(agency_fee, 2),
         "extra_profit_total": round(extra_profit_total, 2),
         "discount_total": round(discount_total, 2),
+        "usn_tax": round(usn_tax, 2),
         "in_pocket": round(in_pocket, 2),
         "diff": round(diff, 2),
     }
 
-def expense_breakdown_to_date(db: Session, project_id: int, at: date) -> tuple[float, float]:
+def expense_breakdown_to_date(db: Session, project_id: int, at: date) -> tuple[float, float, float]:
     # "Потрачено" = базовые расходы. "Доп прибыль" считаем отдельно.
     all_items = db.execute(
         select(ExpenseItem).where(ExpenseItem.project_id == project_id)
@@ -232,6 +320,7 @@ def expense_breakdown_to_date(db: Session, project_id: int, at: date) -> tuple[f
 
     spent_base = 0.0
     extra_profit = 0.0
+    discount_total = 0.0
     for eff in _effective_parent_items(all_items, discount_map):
         due_date = eff["planned_pay_date"]
         if due_date is not None and due_date > at:
@@ -239,8 +328,9 @@ def expense_breakdown_to_date(db: Session, project_id: int, at: date) -> tuple[f
         base = float(eff["effective_total"])
         spent_base += base
         extra_profit += float(eff["extra_total"])
+        discount_total += float(eff["discount_total"])
 
-    return spent_base, extra_profit
+    return spent_base, extra_profit, discount_total
 
 def is_project_active(project: Project, at: date) -> bool:
     if project.created_at.date() > at:

@@ -129,12 +129,20 @@ html[data-theme="light"] .brand-logo {
 }
 
 .brand .v7 {
-  color: var(--accent);
+  color: #ffffff;
   font-weight: 900;
   font-size: 34px;
   letter-spacing: -0.01em;
   line-height: 1;
-  margin-left: -2px;
+  margin-left: -20px;
+}
+
+html[data-theme="light"] .brand .v7 {
+  color: #000000;
+}
+
+.nav > .nav-link:first-of-type {
+  margin-left: 14px;
 }
 
 .nav-add {
@@ -411,6 +419,22 @@ input[type="range"]::-moz-range-thumb {
   background: var(--bg);
 }
 
+.sticky-stack {
+  position: sticky;
+  top: var(--nav-height);
+  z-index: 21;
+  display: grid;
+  gap: 10px;
+  background: var(--bg);
+}
+
+.sticky-stack > .top-panel,
+.sticky-stack > .top-panel-sticky {
+  position: static;
+  top: auto;
+  z-index: auto;
+}
+
 .dashboard-strip {
   display: grid;
   gap: 10px;
@@ -424,7 +448,26 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .life-kpi-strip {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.life-kpi-strip .kpi-card {
+  min-width: 0;
+  padding: 10px 8px;
+}
+
+.life-kpi-strip .muted {
+  white-space: nowrap;
+}
+
+.life-kpi-strip .kpi-value,
+.life-kpi-strip .kpi-value-input,
+.life-kpi-strip .life-period-button {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .kpi-value {
@@ -683,6 +726,11 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   background: transparent;
 }
 
+.sheet-group + .sheet-group {
+  margin-top: 24px;
+  padding-top: 14px;
+}
+
 .sheet-group-head {
   display: flex;
   justify-content: space-between;
@@ -715,8 +763,28 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   padding: 4px 10px;
 }
 
+.group-agency-line {
+  width: min(420px, 100%);
+  margin-top: 8px;
+}
+
+.common-agency-line {
+  margin-top: 24px;
+  padding-top: 14px;
+}
+
+.group-agency-line .agency-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.group-agency-line .agency-amount {
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .expense-table {
-  min-width: 980px;
+  min-width: 930px;
   table-layout: fixed;
 }
 
@@ -730,37 +798,48 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 }
 
 .expense-table .col-date {
-  width: 112px;
+  width: 106px;
   text-align: center;
 }
 
 .expense-table .col-qty {
-  width: 52px;
+  width: 68px;
   text-align: right;
 }
 
 .expense-table .col-unit,
 .expense-table .col-sum,
-.expense-table .col-extra-amount {
-  width: 96px;
+.expense-table .col-extra-amount,
+.expense-table .col-row-total {
+  width: 112px;
   text-align: right;
 }
 
-.expense-table .col-row-total,
 .expense-table .col-discount-amount {
-  width: 128px;
+  width: 92px;
   text-align: right;
 }
 
 .expense-table .col-extra-toggle,
 .expense-table .col-discount-toggle,
 .expense-table .col-estimate {
-  width: 76px;
+  width: 62px;
   text-align: center;
 }
 
+.expense-table .col-discount-toggle {
+  width: 56px;
+}
+
+.expense-table th.col-extra-toggle,
+.expense-table th.col-discount-toggle,
+.expense-table th.col-estimate {
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
 .expense-table .col-actions {
-  width: 44px;
+  width: 40px;
   text-align: center;
 }
 
@@ -787,21 +866,60 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 .expense-table td.col-extra-toggle input[type="checkbox"],
 .expense-table td.col-discount-toggle input[type="checkbox"],
 .expense-table td.col-estimate input[type="checkbox"] {
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  border: 1px solid var(--line-strong);
+  width: 12px;
+  height: 12px;
+  border-radius: 0;
+  border: 0;
   background: transparent;
   margin: 0 auto;
   display: block;
   box-shadow: none;
+  position: relative;
+}
+
+.expense-table td.col-extra-toggle input[type="checkbox"]::before,
+.expense-table td.col-extra-toggle input[type="checkbox"]::after,
+.expense-table td.col-discount-toggle input[type="checkbox"]::before,
+.expense-table td.col-discount-toggle input[type="checkbox"]::after,
+.expense-table td.col-estimate input[type="checkbox"]::before,
+.expense-table td.col-estimate input[type="checkbox"]::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 9px;
+  height: 1px;
+  background: var(--line-strong);
+  border-radius: 1px;
+  transform-origin: center;
+}
+
+.expense-table td.col-extra-toggle input[type="checkbox"]::before,
+.expense-table td.col-discount-toggle input[type="checkbox"]::before,
+.expense-table td.col-estimate input[type="checkbox"]::before {
+  transform: translate(-50%, -50%) rotate(0deg);
+}
+
+.expense-table td.col-extra-toggle input[type="checkbox"]::after,
+.expense-table td.col-discount-toggle input[type="checkbox"]::after,
+.expense-table td.col-estimate input[type="checkbox"]::after {
+  transform: translate(-50%, -50%) rotate(90deg);
 }
 
 .expense-table td.col-extra-toggle input[type="checkbox"]:checked,
 .expense-table td.col-discount-toggle input[type="checkbox"]:checked,
 .expense-table td.col-estimate input[type="checkbox"]:checked {
-  border-color: var(--accent);
-  background: var(--accent);
+  border: 0;
+  background: transparent;
+}
+
+.expense-table td.col-extra-toggle input[type="checkbox"]:checked::before,
+.expense-table td.col-discount-toggle input[type="checkbox"]:checked::before,
+.expense-table td.col-estimate input[type="checkbox"]:checked::before {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  transform: translate(-50%, -50%) rotate(0deg);
 }
 
 .expense-table td.col-extra-toggle input[type="checkbox"]:checked::after,
@@ -810,10 +928,23 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   content: none;
 }
 
+.expense-table td.col-extra-toggle input[type="checkbox"]:checked::before,
+.expense-table td.col-discount-toggle input[type="checkbox"]:checked::before {
+  background: var(--accent);
+}
+
+.expense-table td.col-estimate input[type="checkbox"]:checked::before {
+  background: #000000;
+}
+
 .expense-table td.col-extra-toggle input[type="checkbox"]:focus-visible,
 .expense-table td.col-discount-toggle input[type="checkbox"]:focus-visible,
 .expense-table td.col-estimate input[type="checkbox"]:focus-visible {
   box-shadow: 0 0 0 3px rgba(255, 45, 161, 0.24);
+}
+
+.expense-table td.col-estimate input[type="checkbox"]:focus-visible {
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.24);
 }
 
 .subitem-title-wrap {
@@ -871,33 +1002,6 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 
 .agency-add-btn {
   margin-left: 2px;
-}
-
-.agency-estimate-check {
-  white-space: nowrap;
-}
-
-.agency-estimate-check input[type="checkbox"].agency-estimate-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  border: 1px solid var(--line-strong);
-  background: transparent;
-  margin: 0;
-  box-shadow: none;
-}
-
-.agency-estimate-check input[type="checkbox"].agency-estimate-dot:checked {
-  border-color: var(--accent);
-  background: var(--accent);
-}
-
-.agency-estimate-check input[type="checkbox"].agency-estimate-dot:checked::after {
-  content: none;
-}
-
-.agency-estimate-check input[type="checkbox"].agency-estimate-dot:focus-visible {
-  box-shadow: 0 0 0 3px rgba(255, 45, 161, 0.24);
 }
 
 .diff-value {
@@ -967,6 +1071,20 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   padding: 0;
 }
 
+.modal-close-btn {
+  min-width: 22px;
+  width: 22px;
+  min-height: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 999px;
+  color: #000000;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  opacity: 1;
+}
+
 .settings-icon-btn svg {
   width: 18px;
   height: 18px;
@@ -1014,6 +1132,98 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 
 .discounts-kpi-strip {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.backup-modal {
+  width: min(920px, calc(100vw - 56px));
+}
+
+.backup-modal-body {
+  display: grid;
+  gap: 10px;
+}
+
+.backup-section {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  background: transparent;
+}
+
+.backup-section-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.backup-inline-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.backup-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.backup-grid-frequency {
+  grid-template-columns: minmax(220px, 280px) auto;
+  align-items: end;
+}
+
+.backup-grid-restore {
+  grid-template-columns: minmax(320px, 1.2fr) minmax(230px, 0.9fr) auto;
+  align-items: end;
+}
+
+.backup-actions-cell {
+  display: flex;
+  align-items: end;
+}
+
+.backup-section .settings-field .input {
+  max-width: none;
+}
+
+.backup-projects-wrap {
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.backup-projects-table.table {
+  min-width: 0;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.backup-projects-table th,
+.backup-projects-table td {
+  padding: 8px 10px;
+}
+
+.backup-projects-table .backup-col-select {
+  width: 74px;
+  text-align: center;
+}
+
+.backup-projects-table td.backup-col-select input[type="checkbox"] {
+  margin: 0 auto;
+  display: block;
+}
+
+.backup-meta {
+  margin-top: 2px;
+  line-height: 1.45;
+}
+
+.backup-status {
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .accent-color-input {
@@ -1101,13 +1311,22 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   }
 
   .life-kpi-strip {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 1180px) {
   .project-settings-grid {
     grid-template-columns: 1fr;
+  }
+
+  .backup-grid-frequency,
+  .backup-grid-restore {
+    grid-template-columns: 1fr;
+  }
+
+  .backup-actions-cell {
+    align-items: center;
   }
 
   .agency-row {
@@ -1129,6 +1348,10 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   .nav {
     flex-wrap: wrap;
     padding: 10px;
+  }
+
+  .nav > .nav-link:first-of-type {
+    margin-left: 0;
   }
 
   .brand-logo {
@@ -1173,5 +1396,13 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 
   .kpi-value {
     font-size: 23px;
+  }
+
+  .top-panel,
+  .top-panel-sticky,
+  .sticky-stack {
+    position: static;
+    top: auto;
+    z-index: auto;
   }
 }

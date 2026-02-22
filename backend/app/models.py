@@ -30,6 +30,30 @@ class ImportStatus(str, enum.Enum):
     applied = "applied"
 
 
+class UsnMode(str, enum.Enum):
+    LEGAL = "LEGAL"
+    OPERATIONAL = "OPERATIONAL"
+
+
+class BackupFrequency(str, enum.Enum):
+    OFF = "OFF"
+    DAILY = "DAILY"
+    WEEKLY = "WEEKLY"
+    MONTHLY = "MONTHLY"
+
+
+class AppSettings(Base):
+    __tablename__ = "app_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False, default=1)
+    usn_mode: Mapped[UsnMode] = mapped_column(Enum(UsnMode), default=UsnMode.OPERATIONAL)
+    usn_rate_percent: Mapped[float] = mapped_column(Float, default=6.0)
+    backup_frequency: Mapped[BackupFrequency] = mapped_column(Enum(BackupFrequency), default=BackupFrequency.WEEKLY)
+    last_backup_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class Project(Base):
     __tablename__ = "projects"
 

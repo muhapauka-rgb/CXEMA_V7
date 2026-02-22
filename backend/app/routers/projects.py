@@ -331,7 +331,7 @@ def create_item(project_id: int, payload: ItemCreate, db: Session = Depends(get_
         qty=payload.qty,
         unit_price_base=payload.unit_price_base,
         base_total=payload.base_total,
-        include_in_estimate=payload.include_in_estimate if payload.parent_item_id is None else False,
+        include_in_estimate=payload.include_in_estimate,
         extra_profit_enabled=payload.extra_profit_enabled,
         extra_profit_amount=payload.extra_profit_amount,
         planned_pay_date=payload.planned_pay_date,
@@ -380,9 +380,6 @@ def update_item(project_id: int, item_id: int, payload: ItemUpdate, db: Session 
 
     for k, v in data.items():
         setattr(it, k, v)
-
-    if it.parent_item_id is not None:
-        it.include_in_estimate = False
 
     _refresh_item_calculated_base(it)
     if discount_enabled is not None or discount_amount is not None:

@@ -28,8 +28,17 @@ type Computed = {
   expenses_total: number
   agency_fee: number
   extra_profit_total: number
+  usn_tax?: number
   in_pocket: number
   diff: number
+}
+
+type AppSettings = {
+  id: number
+  usn_mode: "LEGAL" | "OPERATIONAL"
+  usn_rate_percent: number
+  created_at: string
+  updated_at: string
 }
 
 type Group = {
@@ -215,7 +224,11 @@ function toMoneyIntSigned(n: number): string {
 
 function itemInternalTotal(item: Item): number {
   const base = item.mode === "QTY_PRICE"
-    ? Number(item.qty || 0) * Number(item.unit_price_base || 0)
+    ? (() => {
+      const qty = Number(item.qty ?? 0)
+      const unit = Number(item.unit_price_base ?? 0)
+      return qty === 0 ? unit : qty * unit
+    })()
     : Number(item.base_total || 0)
   return base + (item.extra_profit_enabled ? Number(item.extra_profit_amount || 0) : 0)
 }
@@ -308,6 +321,27 @@ function normalizeNumberDraftInput(raw: string): string {
   return formatNumberForInput(value)
 }
 
+function isZeroLikeDraftNumber(raw: string): boolean {
+  const compact = raw.trim().replace(/\s+/g, "")
+  if (!compact) return false
+  return /^0([.,]0+)?$/.test(compact)
+}
+
+function displayDraftNumber(raw: string): string {
+  return isZeroLikeDraftNumber(raw) ? "" : raw
+}
+
+function displayNumberValue(value: number): string {
+  return displayDraftNumber(formatNumberValueForInput(value))
+}
+
+function normalizeNumberDraftInputKeepingZero(raw: string, previousRaw: string): string {
+  if (!raw.trim() && isZeroLikeDraftNumber(previousRaw)) {
+    return normalizeNumberDraftInput(previousRaw)
+  }
+  return normalizeNumberDraftInput(raw)
+}
+
 function parseOptionalDate(raw: string, field: string): string | null {
   const value = raw.trim()
   if (!value) return null
@@ -341,6 +375,13 @@ function toPercentLabel(value: number | undefined): string {
   const n = Number(value)
   if (Number.isInteger(n)) return String(n)
   return n.toLocaleString("ru-RU", { maximumFractionDigits: 2 })
+}
+
+function symmetricPercentPart(total: number, percent: number): number {
+  const gross = Number(total || 0)
+  const p = Number(percent || 0)
+  if (!Number.isFinite(gross) || !Number.isFinite(p) || gross <= 0 || p <= 0) return 0
+  return gross * (p / 100)
 }
 
 function emptyItemForm(groupId?: number): ItemFormState {
@@ -397,6 +438,14 @@ function tryCalcBaseTotal(qtyRaw: string, unitRaw: string): string | null {
   return formatNumberForInput(String(q * u))
 }
 
+function shouldAutoCalcFromQty(qtyRaw: string): boolean {
+  const value = qtyRaw.trim()
+  if (!value) return false
+  const q = parseInputNumber(value)
+  if (q == null || q < 0) return false
+  return true
+}
+
 export default function ProjectPage() {
   const { id } = useParams()
   const projectId = id ? Number(id) : NaN
@@ -415,6 +464,7 @@ export default function ProjectPage() {
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [appSettings, setAppSettings] = useState<AppSettings | null>(null)
   const [projectPriceDraft, setProjectPriceDraft] = useState("0")
   const [savingProjectPrice, setSavingProjectPrice] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
@@ -425,7 +475,6 @@ export default function ProjectPage() {
     google_drive_url: "",
     google_drive_folder: "",
     agency_fee_percent: "10",
-    agency_fee_include_in_estimate: true,
     phones: [""],
   })
 
@@ -467,10 +516,6 @@ export default function ProjectPage() {
     ]).sort((a, b) => a.pay_date.localeCompare(b.pay_date) || a.id - b.id),
     [planPayments, factPayments],
   )
-  const parentItemIds = useMemo(
-    () => new Set(items.filter((it) => it.parent_item_id != null).map((it) => Number(it.parent_item_id))),
-    [items],
-  )
   const allItemIds = useMemo(() => new Set(items.map((it) => it.id)), [items])
   const topLevelItems = useMemo(
     () => items.filter((it) => it.parent_item_id == null || !allItemIds.has(Number(it.parent_item_id))),
@@ -493,7 +538,7 @@ export default function ProjectPage() {
     for (const it of items) {
       const draft = itemDrafts[it.id] || itemToSheetDraft(it)
       let base = parseDraftNumber(draft.base_total)
-      if (draft.qty.trim() !== "") {
+      if (shouldAutoCalcFromQty(draft.qty)) {
         const qty = parseInputNumber(draft.qty)
         const unit = parseInputNumber(draft.unit_price_base)
         if (qty != null && qty >= 0 && unit != null && unit >= 0) {
@@ -505,24 +550,8 @@ export default function ProjectPage() {
       const totalBeforeDiscount = base + extra
       out[it.id] = { base, extra, discount, totalBeforeDiscount, total: totalBeforeDiscount - discount }
     }
-    for (const [parentId, children] of childItemsByParent.entries()) {
-      let base = 0
-      let extra = 0
-      for (const child of children) {
-        const childMath = out[child.id]
-        if (!childMath) continue
-        base += childMath.base
-        extra += childMath.extra
-      }
-      const parentItem = items.find((it) => it.id === parentId)
-      if (!parentItem) continue
-      const parentDraft = itemDrafts[parentId] || itemToSheetDraft(parentItem)
-      const discount = parentDraft.discount_enabled ? parseDraftSignedNumber(parentDraft.discount_amount) : 0
-      const totalBeforeDiscount = base + extra
-      out[parentId] = { base, extra, discount, totalBeforeDiscount, total: totalBeforeDiscount - discount }
-    }
     return out
-  }, [items, itemDrafts, childItemsByParent])
+  }, [items, itemDrafts])
   const projectPriceDisplayValue = useMemo(() => {
     const parsed = parseInputNumber(projectPriceDraft)
     if (parsed == null || parsed < 0) return Number(project?.project_price_total || 0)
@@ -562,18 +591,24 @@ export default function ProjectPage() {
       const groupTopLevel = items.filter((it) => it.group_id === g.id && (it.parent_item_id == null || !groupItemIds.has(Number(it.parent_item_id))))
       const groupTotal = groupTopLevel
         .reduce((sum, it) => sum + (itemMathById[it.id]?.total ?? itemInternalTotal(it)), 0)
-      return acc + (groupTotal * agencyPercent) / 100
+      return acc + symmetricPercentPart(groupTotal, agencyPercent)
     }, 0),
     [groups, items, groupAgencyEnabled, agencyPercent, itemMathById],
   )
   const commonAgencyAmount = useMemo(
-    () => (isCommonAgencyOpen ? projectPriceDisplayValue * (agencyPercent / 100) : 0),
+    () => (isCommonAgencyOpen ? symmetricPercentPart(projectPriceDisplayValue, agencyPercent) : 0),
     [isCommonAgencyOpen, projectPriceDisplayValue, agencyPercent],
   )
   const agencyTotalFromExpenses = groupAgencyTotal + commonAgencyAmount
-  const inPocketDisplay = agencyTotalFromExpenses + extraProfitDisplay
-  const diffDisplay = projectPriceDisplayValue - (expensesDisplay + agencyTotalFromExpenses)
-  const discountDisplayClass = discountDisplay > 0 ? "accent" : discountDisplay < 0 ? "ok" : ""
+  const usnMode = appSettings?.usn_mode || "OPERATIONAL"
+  const usnRate = Number(appSettings?.usn_rate_percent || 6)
+  const usnBaseForProject = usnMode === "LEGAL"
+    ? paymentsTotal
+    : (expensesDisplay + agencyTotalFromExpenses)
+  const usnAmount = usnBaseForProject > 0 ? (usnBaseForProject * usnRate) / 100 : 0
+  const expensesDisplayWithUsn = expensesDisplay + usnAmount
+  const inPocketDisplay = agencyTotalFromExpenses + extraProfitDisplay - discountDisplay
+  const diffDisplay = projectPriceDisplayValue - (expensesDisplay + agencyTotalFromExpenses + usnAmount)
   const groupAgencyStorageKey = useMemo(
     () => `cxema-v7:project:${projectId}:group-agency`,
     [projectId],
@@ -584,7 +619,7 @@ export default function ProjectPage() {
     setLoading(true)
     setError(null)
     try {
-      const [p, c, gs, its, plan, fact, sheet, auth] = await Promise.all([
+      const [p, c, gs, its, plan, fact, sheet, auth, settings] = await Promise.all([
         apiGet<Project>(`/api/projects/${projectId}`),
         apiGet<Computed>(`/api/projects/${projectId}/computed`),
         apiGet<Group[]>(`/api/projects/${projectId}/groups`),
@@ -593,6 +628,7 @@ export default function ProjectPage() {
         apiGet<PaymentFact[]>(`/api/projects/${projectId}/payments/fact`),
         apiGet<SheetsStatus>(`/api/projects/${projectId}/sheets/status`),
         apiGet<GoogleAuthStatus>(`/api/google/auth/status`),
+        apiGet<AppSettings>("/api/settings"),
       ])
       setProject(p)
       setComputed(c)
@@ -602,13 +638,13 @@ export default function ProjectPage() {
       setFactPayments(fact)
       setSheetStatus(sheet)
       setGoogleAuth(auth)
+      setAppSettings(settings)
       setSettingsForm({
         title: p.title,
         client_name: p.client_name || "",
         google_drive_url: p.google_drive_url || "",
         google_drive_folder: p.google_drive_folder || "",
         agency_fee_percent: formatNumberValueForInput(p.agency_fee_percent ?? 10),
-        agency_fee_include_in_estimate: p.agency_fee_include_in_estimate ?? true,
         phones: parsePhones(p.client_phone),
       })
       setProjectPriceDraft(formatNumberValueForInput(p.project_price_total || 0))
@@ -698,7 +734,7 @@ export default function ProjectPage() {
         google_drive_url: settingsForm.google_drive_url.trim() || null,
         google_drive_folder: settingsForm.google_drive_folder.trim() || null,
         agency_fee_percent: parseNonNegative(settingsForm.agency_fee_percent, "agency_fee_percent"),
-        agency_fee_include_in_estimate: settingsForm.agency_fee_include_in_estimate,
+        agency_fee_include_in_estimate: true,
       })
       setIsSettingsOpen(false)
       await loadAll()
@@ -852,7 +888,7 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
     return {
       ...common,
       mode: "SINGLE_TOTAL",
-      qty: null,
+      qty: qty ?? null,
       unit_price_base: unitPrice ?? null,
       base_total: baseTotal ?? unitPrice ?? 0,
     }
@@ -865,15 +901,7 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
     try {
       setError(null)
       setSavingItemId(item.id)
-      const payload = parentItemIds.has(item.id)
-        ? {
-            title: draft.title.trim(),
-            planned_pay_date: parseOptionalDate(draft.planned_pay_date, "planned_pay_date"),
-            include_in_estimate: draft.include_in_estimate,
-            discount_enabled: draft.discount_enabled,
-            discount_amount: draft.discount_enabled ? parseSigned(draft.discount_amount, "discount_amount") || 0 : 0,
-          }
-        : payloadFromDraft(draft)
+      const payload = payloadFromDraft(draft)
       const updated = await apiPatch<Item>(`/api/projects/${projectId}/items/${item.id}`, payload)
       setItems((prev) => prev.map((it) => (it.id === item.id ? updated : it)))
       setItemDrafts((prev) => ({ ...prev, [item.id]: itemToSheetDraft(updated) }))
@@ -915,22 +943,6 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
       })
     } catch (e) {
       setError(String(e))
-    }
-  }
-
-  async function setAgencyEstimateEnabled(next: boolean) {
-    try {
-      setError(null)
-      setSettingsSaving(true)
-      const updated = await apiPatch<Project>(`/api/projects/${projectId}`, {
-        agency_fee_include_in_estimate: next,
-      })
-      setProject(updated)
-      setSettingsForm((prev) => ({ ...prev, agency_fee_include_in_estimate: updated.agency_fee_include_in_estimate }))
-    } catch (e) {
-      setError(String(e))
-    } finally {
-      setSettingsSaving(false)
     }
   }
 
@@ -1112,66 +1124,68 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
   return (
     <>
     <div className={`grid ${isSettingsOpen ? "page-content-muted" : ""}`}>
-      <div className="panel top-panel top-panel-sticky">
-        <div className="row" style={{ justifyContent: "space-between" }}>
-          <div>
-            <div className="h1" style={{ marginBottom: 4 }}>{project.title}</div>
-          </div>
-          <div className="row">
-            <button className="btn" onClick={() => void loadAll()}>Обновить</button>
-            <button className={`btn icon-btn ${isSettingsOpen ? "tab-active" : ""}`} onClick={() => setIsSettingsOpen((prev) => !prev)}>
-              <GearIcon />
-            </button>
+      <div className="sticky-stack">
+        <div className="panel top-panel">
+          <div className="row" style={{ justifyContent: "space-between" }}>
+            <div>
+              <div className="h1" style={{ marginBottom: 4 }}>{project.title}</div>
+            </div>
+            <div className="row">
+              <button className="btn" onClick={() => void loadAll()}>Обновить</button>
+              <button className={`btn icon-btn ${isSettingsOpen ? "tab-active" : ""}`} onClick={() => setIsSettingsOpen((prev) => !prev)}>
+                <GearIcon />
+              </button>
+            </div>
           </div>
         </div>
-      </div>
 
-      <div className="dashboard-strip">
-        <div className="kpi-card">
-          <div className="muted">Стоимость проекта</div>
-          <input
-            className="kpi-value-input"
-            value={projectPriceDraft}
-            disabled={savingProjectPrice}
-            onFocus={(e) => handleZeroFocus(e.currentTarget)}
-            onChange={(e) => setProjectPriceDraft(e.target.value)}
-            onBlur={(e) => {
-              const next = normalizeNumberDraftInput(e.currentTarget.value)
-              setProjectPriceDraft(next)
-              void saveProjectPrice(next)
-            }}
-            onKeyDown={(e) => {
-              if (e.key !== "Enter") return
-              e.preventDefault()
-              const next = normalizeNumberDraftInput(e.currentTarget.value)
-              setProjectPriceDraft(next)
-              void saveProjectPrice(next)
-            }}
-          />
-        </div>
-        <div className="kpi-card">
-          <div className="muted">Расходы</div>
-          <div className="kpi-value">{toMoneyInt(expensesDisplay)}</div>
-        </div>
-        <div className="kpi-card">
-          <div className="muted">Агентские ({toPercentLabel(project.agency_fee_percent)}%)</div>
-          <div className="kpi-value">{toMoneyInt(agencyTotalFromExpenses)}</div>
-        </div>
-        <div className="kpi-card">
-          <div className="muted">Доп прибыль</div>
-          <div className="kpi-value">{toMoneyInt(extraProfitDisplay)}</div>
-        </div>
-        <div className="kpi-card">
-          <div className="muted">Скидка</div>
-          <div className={`kpi-value ${discountDisplayClass}`}>{toMoneyIntSigned(discountDisplay)}</div>
-        </div>
-        <div className="kpi-card">
-          <div className="muted">В кармане</div>
-          <div className="kpi-value">{toMoneyInt(inPocketDisplay)}</div>
-        </div>
-        <div className="kpi-card">
-          <div className="muted">Разница</div>
-          <div className="kpi-value diff-value">{toMoneyInt(diffDisplay)}</div>
+        <div className="dashboard-strip">
+          <div className="kpi-card">
+            <div className="muted">Стоимость проекта</div>
+            <input
+              className="kpi-value-input"
+              value={projectPriceDraft}
+              disabled={savingProjectPrice}
+              onFocus={(e) => handleZeroFocus(e.currentTarget)}
+              onChange={(e) => setProjectPriceDraft(e.target.value)}
+              onBlur={(e) => {
+                const next = normalizeNumberDraftInput(e.currentTarget.value)
+                setProjectPriceDraft(next)
+                void saveProjectPrice(next)
+              }}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return
+                e.preventDefault()
+                const next = normalizeNumberDraftInput(e.currentTarget.value)
+                setProjectPriceDraft(next)
+                void saveProjectPrice(next)
+              }}
+            />
+          </div>
+          <div className="kpi-card">
+            <div className="muted">Расходы</div>
+            <div className="kpi-value">{toMoneyInt(expensesDisplayWithUsn)}</div>
+          </div>
+          <div className="kpi-card">
+            <div className="muted">Агентские ({toPercentLabel(project.agency_fee_percent)}%)</div>
+            <div className="kpi-value">{toMoneyInt(agencyTotalFromExpenses)}</div>
+          </div>
+          <div className="kpi-card">
+            <div className="muted">Доп прибыль</div>
+            <div className="kpi-value">{toMoneyInt(extraProfitDisplay)}</div>
+          </div>
+          <div className="kpi-card">
+            <div className="muted">Скидка</div>
+            <div className="kpi-value">{toMoneyIntSigned(discountDisplay)}</div>
+          </div>
+          <div className="kpi-card">
+            <div className="muted">В кармане</div>
+            <div className="kpi-value">{toMoneyInt(inPocketDisplay)}</div>
+          </div>
+          <div className="kpi-card">
+            <div className="muted">Разница</div>
+            <div className="kpi-value diff-value">{toMoneyInt(diffDisplay)}</div>
+          </div>
         </div>
       </div>
 
@@ -1242,7 +1256,7 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
               .reduce((acc, it) => acc + (itemMathById[it.id]?.total ?? itemInternalTotal(it)), 0)
             const agencyEnabled = !!groupAgencyEnabled[g.id]
             const agencyPercent = Number(project.agency_fee_percent || 0)
-            const agencyAmount = agencyEnabled ? (baseTotal * agencyPercent) / 100 : 0
+            const agencyAmount = agencyEnabled ? symmetricPercentPart(baseTotal, agencyPercent) : 0
             const total = baseTotal + agencyAmount
 
             return (
@@ -1277,22 +1291,6 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                   <div className="row">
                     <span>{toMoney(total)}</span>
                     <button
-                      className="btn sheet-agency-btn"
-                      aria-label={agencyEnabled ? "Убрать агентские в группе" : "Добавить агентские в группе"}
-                      disabled={creatingInGroup === g.id || savingGroupId === g.id}
-                      onClick={() => setGroupAgencyEnabled((prev) => {
-                        const next = { ...prev }
-                        if (next[g.id]) {
-                          delete next[g.id]
-                        } else {
-                          next[g.id] = true
-                        }
-                        return next
-                      })}
-                    >
-                      Агентские
-                    </button>
-                    <button
                       className="btn sheet-plus-btn"
                       disabled={creatingInGroup === g.id || savingGroupId === g.id || deletingGroupId === g.id}
                       onClick={() => void createItemInGroup(g.id)}
@@ -1310,7 +1308,7 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                   </div>
                 </div>
 
-                {(gItems.length > 0 || agencyEnabled) && (
+                {gItems.length > 0 && (
                   <div className="table-wrap">
                     <table className="table expense-table">
                       <thead>
@@ -1320,10 +1318,10 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                           <th className="col-qty">Шт</th>
                           <th className="col-unit">Цена<br />за ед</th>
                           <th className="col-sum">Сумма</th>
-                          {showExtraProfitColumns && <th className="col-extra-amount">Доп<br />прибыль</th>}
                           {showRowTotalColumn && <th className="col-row-total">Итог<br />строки</th>}
-                          {showDiscountColumns && <th className="col-discount-amount">Скидка</th>}
+                          {showExtraProfitColumns && <th className="col-extra-amount">Доп<br />прибыль</th>}
                           <th className="col-extra-toggle">Доп<br />прибыль</th>
+                          {showDiscountColumns && <th className="col-discount-amount">Скидка</th>}
                           <th className="col-discount-toggle">Скидка</th>
                           <th className="col-estimate">В<br />смету</th>
                           <th className="col-actions" />
@@ -1333,8 +1331,6 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                         {orderedRows.map((it) => {
                           const draft = itemDrafts[it.id] || itemToSheetDraft(it)
                           const rowMath = itemMathById[it.id]
-                          const rowBase = rowMath?.base ?? parseDraftNumber(draft.base_total)
-                          const rowExtra = rowMath?.extra ?? (draft.extra_profit_enabled ? parseDraftNumber(draft.extra_profit_amount) : 0)
                           const rowTotal = rowMath?.total ?? itemDraftTotal(draft)
                           const isSubitem = it.parent_item_id != null
                           const childRows = childItemsByParent.get(it.id) || []
@@ -1417,13 +1413,13 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                               <td className="col-qty">
                                 <input
                                   className="input"
-                                  value={hasSubitems ? "" : draft.qty}
-                                  placeholder="0"
-                                  readOnly={hasSubitems}
+                                  value={displayDraftNumber(draft.qty)}
+                                  placeholder=""
                                   onChange={(e) => {
-                                    if (hasSubitems) return
                                     const nextQty = e.target.value
-                                    const autoTotal = tryCalcBaseTotal(nextQty, draft.unit_price_base)
+                                    const autoTotal = shouldAutoCalcFromQty(nextQty)
+                                      ? tryCalcBaseTotal(nextQty, draft.unit_price_base)
+                                      : null
                                     setItemDrafts((prev) => ({
                                       ...prev,
                                       [it.id]: {
@@ -1434,9 +1430,10 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                                     }))
                                   }}
                                   onBlur={(e) => {
-                                    if (hasSubitems) return
-                                    const nextQty = normalizeNumberDraftInput(e.currentTarget.value)
-                                    const autoTotal = tryCalcBaseTotal(nextQty, draft.unit_price_base)
+                                    const nextQty = normalizeNumberDraftInputKeepingZero(e.currentTarget.value, draft.qty)
+                                    const autoTotal = shouldAutoCalcFromQty(nextQty)
+                                      ? tryCalcBaseTotal(nextQty, draft.unit_price_base)
+                                      : null
                                     const next = { ...draft, qty: nextQty, base_total: autoTotal ?? draft.base_total }
                                     setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
                                     void persistItemRow(it, next)
@@ -1444,9 +1441,10 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                                   onKeyDown={(e) => {
                                     if (e.key !== "Enter") return
                                     e.preventDefault()
-                                    if (hasSubitems) return
-                                    const nextQty = normalizeNumberDraftInput(e.currentTarget.value)
-                                    const autoTotal = tryCalcBaseTotal(nextQty, draft.unit_price_base)
+                                    const nextQty = normalizeNumberDraftInputKeepingZero(e.currentTarget.value, draft.qty)
+                                    const autoTotal = shouldAutoCalcFromQty(nextQty)
+                                      ? tryCalcBaseTotal(nextQty, draft.unit_price_base)
+                                      : null
                                     const next = { ...draft, qty: nextQty, base_total: autoTotal ?? draft.base_total }
                                     commitItemDraft(it, next)
                                   }}
@@ -1455,13 +1453,13 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                               <td className="col-unit">
                                 <input
                                   className="input"
-                                  value={hasSubitems ? "" : draft.unit_price_base}
-                                  placeholder="0"
-                                  readOnly={hasSubitems}
+                                  value={displayDraftNumber(draft.unit_price_base)}
+                                  placeholder=""
                                   onChange={(e) => {
-                                    if (hasSubitems) return
                                     const nextUnit = e.target.value
-                                    const autoTotal = tryCalcBaseTotal(draft.qty, nextUnit)
+                                    const autoTotal = shouldAutoCalcFromQty(draft.qty)
+                                      ? tryCalcBaseTotal(draft.qty, nextUnit)
+                                      : null
                                     setItemDrafts((prev) => ({
                                       ...prev,
                                       [it.id]: {
@@ -1472,9 +1470,10 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                                     }))
                                   }}
                                   onBlur={(e) => {
-                                    if (hasSubitems) return
-                                    const nextUnit = normalizeNumberDraftInput(e.currentTarget.value)
-                                    const autoTotal = tryCalcBaseTotal(draft.qty, nextUnit)
+                                    const nextUnit = normalizeNumberDraftInputKeepingZero(e.currentTarget.value, draft.unit_price_base)
+                                    const autoTotal = shouldAutoCalcFromQty(draft.qty)
+                                      ? tryCalcBaseTotal(draft.qty, nextUnit)
+                                      : null
                                     const next = { ...draft, unit_price_base: nextUnit, base_total: autoTotal ?? draft.base_total }
                                     setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
                                     void persistItemRow(it, next)
@@ -1482,9 +1481,10 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                                   onKeyDown={(e) => {
                                     if (e.key !== "Enter") return
                                     e.preventDefault()
-                                    if (hasSubitems) return
-                                    const nextUnit = normalizeNumberDraftInput(e.currentTarget.value)
-                                    const autoTotal = tryCalcBaseTotal(draft.qty, nextUnit)
+                                    const nextUnit = normalizeNumberDraftInputKeepingZero(e.currentTarget.value, draft.unit_price_base)
+                                    const autoTotal = shouldAutoCalcFromQty(draft.qty)
+                                      ? tryCalcBaseTotal(draft.qty, nextUnit)
+                                      : null
                                     const next = { ...draft, unit_price_base: nextUnit, base_total: autoTotal ?? draft.base_total }
                                     commitItemDraft(it, next)
                                   }}
@@ -1493,116 +1493,110 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                               <td className="col-sum">
                                 <input
                                   className="input"
-                                  value={hasSubitems ? formatNumberValueForInput(rowBase) : draft.base_total}
-                                  placeholder="Сумма"
-                                  readOnly={hasSubitems || draft.qty.trim() !== ""}
+                                  value={displayDraftNumber(draft.base_total)}
+                                  placeholder=""
+                                  readOnly={shouldAutoCalcFromQty(draft.qty)}
                                   onChange={(e) => setItemDrafts((prev) => ({ ...prev, [it.id]: { ...draft, base_total: e.target.value } }))}
                                   onFocus={(e) => handleZeroFocus(e.currentTarget)}
                                   onBlur={(e) => {
-                                    if (hasSubitems) return
-                                    const next = { ...draft, base_total: normalizeNumberDraftInput(e.currentTarget.value) }
+                                    const next = { ...draft, base_total: normalizeNumberDraftInputKeepingZero(e.currentTarget.value, draft.base_total) }
                                     setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
                                     void persistItemRow(it, next)
                                   }}
                                   onKeyDown={(e) => {
                                     if (e.key !== "Enter") return
                                     e.preventDefault()
-                                    if (hasSubitems) return
-                                    const next = { ...draft, base_total: normalizeNumberDraftInput(e.currentTarget.value) }
+                                    const next = { ...draft, base_total: normalizeNumberDraftInputKeepingZero(e.currentTarget.value, draft.base_total) }
                                     commitItemDraft(it, next)
                                   }}
                                 />
                               </td>
-                              {showExtraProfitColumns && (
-                                <td className="col-extra-amount">
-                                  {hasSubitems ? (
-                                    <input
-                                      className="input"
-                                      value={formatNumberValueForInput(rowExtra)}
-                                      readOnly
-                                    />
-                                  ) : draft.extra_profit_enabled ? (
-                                    <input
-                                      className="input"
-                                      value={draft.extra_profit_amount}
-                                      onChange={(e) => setItemDrafts((prev) => ({ ...prev, [it.id]: { ...draft, extra_profit_amount: e.target.value } }))}
-                                      onFocus={(e) => handleZeroFocus(e.currentTarget)}
-                                      onBlur={(e) => {
-                                        const next = { ...draft, extra_profit_amount: normalizeNumberDraftInput(e.currentTarget.value) }
-                                        setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
-                                        void persistItemRow(it, next)
-                                      }}
-                                      onKeyDown={(e) => {
-                                        if (e.key !== "Enter") return
-                                        e.preventDefault()
-                                        const next = { ...draft, extra_profit_amount: normalizeNumberDraftInput(e.currentTarget.value) }
-                                        commitItemDraft(it, next)
-                                      }}
-                                    />
-                                  ) : (
-                                    <span className="muted">—</span>
-                                  )}
-                                </td>
-                              )}
                               {showRowTotalColumn && (
                                 <td className="col-row-total">
                                   <input
                                     className="input"
-                                    value={formatNumberValueForInput(rowTotal)}
+                                    value={displayNumberValue(rowTotal)}
                                     readOnly
                                   />
                                 </td>
                               )}
-                              {showDiscountColumns && (
-                                <td className="col-discount-amount">
-                                  {isSubitem ? (
-                                    <span className="muted">—</span>
-                                  ) : draft.discount_enabled ? (
+                              {showExtraProfitColumns && (
+                                <td className="col-extra-amount">
+                                  {draft.extra_profit_enabled ? (
                                     <input
                                       className="input"
-                                      value={draft.discount_amount}
-                                      onChange={(e) => setItemDrafts((prev) => ({ ...prev, [it.id]: { ...draft, discount_amount: e.target.value } }))}
+                                      value={displayDraftNumber(draft.extra_profit_amount)}
+                                      onChange={(e) => setItemDrafts((prev) => ({ ...prev, [it.id]: { ...draft, extra_profit_amount: e.target.value } }))}
                                       onFocus={(e) => handleZeroFocus(e.currentTarget)}
                                       onBlur={(e) => {
-                                        const next = { ...draft, discount_amount: normalizeNumberDraftInput(e.currentTarget.value) }
+                                        const next = { ...draft, extra_profit_amount: normalizeNumberDraftInputKeepingZero(e.currentTarget.value, draft.extra_profit_amount) }
                                         setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
                                         void persistItemRow(it, next)
                                       }}
                                       onKeyDown={(e) => {
                                         if (e.key !== "Enter") return
                                         e.preventDefault()
-                                        const next = { ...draft, discount_amount: normalizeNumberDraftInput(e.currentTarget.value) }
+                                        const next = { ...draft, extra_profit_amount: normalizeNumberDraftInputKeepingZero(e.currentTarget.value, draft.extra_profit_amount) }
                                         commitItemDraft(it, next)
                                       }}
                                     />
+                                  ) : hasSubitems ? (
+                                    <input
+                                      className="input"
+                                      value={displayNumberValue(rowMath?.extra ?? 0)}
+                                      readOnly
+                                    />
                                   ) : (
-                                    <span className="muted">—</span>
+                                    <span className="muted" />
                                   )}
                                 </td>
                               )}
                               <td className="col-extra-toggle">
-                                {hasSubitems ? (
-                                  <span className="muted">—</span>
-                                ) : (
-                                  <input
-                                    type="checkbox"
-                                    checked={draft.extra_profit_enabled}
-                                    onChange={(e) => {
-                                      const checked = e.target.checked
-                                      const next = {
-                                        ...draft,
-                                        extra_profit_enabled: checked,
-                                        extra_profit_amount: checked ? draft.extra_profit_amount : "0",
-                                      }
-                                      setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
-                                      void persistItemRow(it, next)
-                                    }}
-                                  />
-                                )}
+                                <input
+                                  type="checkbox"
+                                  checked={draft.extra_profit_enabled}
+                                  onChange={(e) => {
+                                    const checked = e.target.checked
+                                    const next = {
+                                      ...draft,
+                                      extra_profit_enabled: checked,
+                                      extra_profit_amount: checked ? draft.extra_profit_amount : "0",
+                                    }
+                                    setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
+                                    void persistItemRow(it, next)
+                                  }}
+                                />
                               </td>
+                              {showDiscountColumns && (
+                                <td className="col-discount-amount">
+                                  {isSubitem ? (
+                                    <span className="muted" />
+                                  ) : draft.discount_enabled ? (
+                                    <input
+                                      className="input"
+                                      value={displayDraftNumber(draft.discount_amount)}
+                                      onChange={(e) => setItemDrafts((prev) => ({ ...prev, [it.id]: { ...draft, discount_amount: e.target.value } }))}
+                                      onFocus={(e) => handleZeroFocus(e.currentTarget)}
+                                      onBlur={(e) => {
+                                        const next = { ...draft, discount_amount: normalizeNumberDraftInputKeepingZero(e.currentTarget.value, draft.discount_amount) }
+                                        setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
+                                        void persistItemRow(it, next)
+                                      }}
+                                      onKeyDown={(e) => {
+                                        if (e.key !== "Enter") return
+                                        e.preventDefault()
+                                        const next = { ...draft, discount_amount: normalizeNumberDraftInputKeepingZero(e.currentTarget.value, draft.discount_amount) }
+                                        commitItemDraft(it, next)
+                                      }}
+                                    />
+                                  ) : (
+                                    <span className="muted" />
+                                  )}
+                                </td>
+                              )}
                               <td className="col-discount-toggle">
                                 {isSubitem ? (
-                                  <span className="muted">—</span>
+                                  <span className="muted" />
                                 ) : (
                                   <input
                                     type="checkbox"
@@ -1621,19 +1615,15 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                                 )}
                               </td>
                               <td className="col-estimate">
-                                {isSubitem ? (
-                                  <span className="muted">—</span>
-                                ) : (
-                                  <input
-                                    type="checkbox"
-                                    checked={draft.include_in_estimate}
-                                    onChange={(e) => {
-                                      const next = { ...draft, include_in_estimate: e.target.checked }
-                                      setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
-                                      void persistItemRow(it, next)
-                                    }}
-                                  />
-                                )}
+                                <input
+                                  type="checkbox"
+                                  checked={draft.include_in_estimate}
+                                  onChange={(e) => {
+                                    const next = { ...draft, include_in_estimate: e.target.checked }
+                                    setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
+                                    void persistItemRow(it, next)
+                                  }}
+                                />
                               </td>
                               <td className="col-actions">
                                 <button
@@ -1648,59 +1638,44 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                             </tr>
                           )
                         })}
-                        {agencyEnabled && (
-                          <tr className="group-agency-row">
-                            <td className="col-title">Агентские ({toPercentLabel(project.agency_fee_percent)}%)</td>
-                            <td className="col-date muted">авто</td>
-                            <td className="col-qty muted">—</td>
-                            <td className="col-unit muted">—</td>
-                            <td className="col-sum">{toMoney(agencyAmount)}</td>
-                            {showExtraProfitColumns && <td className="col-extra-amount muted">—</td>}
-                            {showRowTotalColumn && <td className="col-row-total muted">—</td>}
-                            {showDiscountColumns && <td className="col-discount-amount muted">—</td>}
-                            <td className="col-extra-toggle muted">—</td>
-                            <td className="col-discount-toggle muted">—</td>
-                            <td className="col-estimate muted">—</td>
-                            <td className="col-actions">
-                              <button
-                                className="btn icon-btn"
-                                aria-label="Удалить агентские группы"
-                                onClick={() => setGroupAgencyEnabled((prev) => {
-                                  const next = { ...prev }
-                                  delete next[g.id]
-                                  return next
-                                })}
-                              >
-                                <TrashIcon />
-                              </button>
-                            </td>
-                          </tr>
-                        )}
                       </tbody>
                     </table>
                   </div>
                 )}
+
+                <div className="panel agency-line group-agency-line">
+                  <div className="agency-row">
+                    <div className="agency-title">Агентские ({toPercentLabel(project.agency_fee_percent)}%)</div>
+                    {agencyEnabled && (
+                      <div className="agency-amount">{toMoney(agencyAmount)}</div>
+                    )}
+                    <button
+                      className="btn sheet-plus-btn agency-add-btn"
+                      aria-label={agencyEnabled ? "Убрать агентские в группе" : "Добавить агентские в группе"}
+                      disabled={creatingInGroup === g.id || savingGroupId === g.id || deletingGroupId === g.id}
+                      onClick={() => setGroupAgencyEnabled((prev) => {
+                        const next = { ...prev }
+                        if (next[g.id]) {
+                          delete next[g.id]
+                        } else {
+                          next[g.id] = true
+                        }
+                        return next
+                      })}
+                    >
+                      {agencyEnabled ? "-" : "+"}
+                    </button>
+                  </div>
+                </div>
               </div>
             )
           })}
 
-          <div className="panel agency-line">
+          <div className="panel agency-line common-agency-line">
             <div className="agency-row">
               <div className="agency-title">Агентские ({toPercentLabel(project.agency_fee_percent)}%)</div>
               {isCommonAgencyOpen && (
                 <div className="agency-amount">{toMoney(commonAgencyAmount)}</div>
-              )}
-              {isCommonAgencyOpen && (
-                <label className="row agency-estimate-check">
-                  <input
-                    className="agency-estimate-dot"
-                    type="checkbox"
-                    checked={project.agency_fee_include_in_estimate ?? true}
-                    disabled={settingsSaving}
-                    onChange={(e) => void setAgencyEstimateEnabled(e.target.checked)}
-                  />
-                  <span>В смету</span>
-                </label>
               )}
               <button
                 className="btn sheet-plus-btn agency-add-btn"
@@ -1709,6 +1684,13 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
               >
                 {isCommonAgencyOpen ? "-" : "+"}
               </button>
+            </div>
+          </div>
+
+          <div className="panel agency-line">
+            <div className="agency-row">
+              <div className="agency-title">УСН ({toPercentLabel(usnRate)}%)</div>
+              <div className="agency-amount">{toMoney(usnAmount)}</div>
             </div>
           </div>
         </div>
@@ -2052,18 +2034,6 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
               />
             </label>
 
-            <label className="settings-field settings-toggle">
-              <span className="settings-label">Агентские в смету</span>
-              <label className="row" style={{ gap: 8 }}>
-                <input
-                  type="checkbox"
-                  checked={settingsForm.agency_fee_include_in_estimate}
-                  onChange={(e) => setSettingsForm((prev) => ({ ...prev, agency_fee_include_in_estimate: e.target.checked }))}
-                />
-                <span className="muted">Добавлять в смету</span>
-              </label>
-            </label>
-
             <div className="settings-field settings-phones">
               <span className="settings-label">Телефоны контакта</span>
               <div className="phones-stack">
@@ -2102,7 +2072,7 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
 
           <div className="row">
             <button className="btn" disabled={settingsSaving} onClick={() => void saveProjectSettings()}>Сохранить настройки</button>
-            <button className="btn" disabled={settingsSaving} onClick={() => setIsSettingsOpen(false)}>Закрыть</button>
+            <button className="btn icon-btn modal-close-btn" aria-label="Закрыть окно" disabled={settingsSaving} onClick={() => setIsSettingsOpen(false)}>×</button>
           </div>
         </div>
       </div>
