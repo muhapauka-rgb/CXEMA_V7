@@ -151,10 +151,7 @@ def _estimate_payload(
                 "date": _fmt_date(it.planned_pay_date),
                 "qty": None if it.qty is None else _safe_num(it.qty),
                 "unit_price": None if it.unit_price_base is None else _safe_num(it.unit_price_base),
-                "base": base,
-                "extra": extra,
-                "discount": discount_amount,
-                "row_total": row_total,
+                "sum": row_total,
             }
         )
 
@@ -249,10 +246,7 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
         date = escape(_fmt_plain(row["date"]))
         qty = "" if row["qty"] is None else escape(_fmt_money(row["qty"]).replace(",00", ""))
         unit_price = "" if row["unit_price"] is None else escape(_fmt_money(row["unit_price"]))
-        base = escape(_fmt_money(row["base"]))
-        extra = "" if _safe_num(row["extra"]) == 0 else escape(_fmt_money(row["extra"]))
-        discount = "" if _safe_num(row["discount"]) == 0 else escape(_fmt_money(row["discount"]))
-        row_total = escape(_fmt_money(row["row_total"]))
+        row_sum = escape(_fmt_money(row["sum"]))
         rows_expenses.append(
             f"""
             <tr>
@@ -261,16 +255,13 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
               <td class="center">{date}</td>
               <td class="num">{qty}</td>
               <td class="num">{unit_price}</td>
-              <td class="num">{base}</td>
-              <td class="num">{extra}</td>
-              <td class="num">{discount}</td>
-              <td class="num strong">{row_total}</td>
+              <td class="num strong">{row_sum}</td>
             </tr>
             """
         )
 
     if not rows_expenses:
-        rows_expenses.append('<tr><td colspan="9" class="empty">Нет строк, отмеченных в смету</td></tr>')
+        rows_expenses.append('<tr><td colspan="6" class="empty">Нет строк, отмеченных в смету</td></tr>')
 
     rows_payments = []
     for row in payments:
@@ -444,14 +435,11 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
           <thead>
             <tr>
               <th style="width:13%">Группа</th>
-              <th style="width:19%">Статья</th>
-              <th style="width:11%">Дата</th>
-              <th style="width:6%">Шт</th>
-              <th style="width:11%">Цена за ед</th>
-              <th style="width:10%">База</th>
-              <th style="width:9%">Доп прибыль</th>
-              <th style="width:8%">Скидка</th>
-              <th style="width:13%">Итог строки</th>
+              <th style="width:31%">Статья</th>
+              <th style="width:13%">Дата</th>
+              <th style="width:8%">Шт</th>
+              <th style="width:13%">Цена за ед</th>
+              <th style="width:22%">Сумма</th>
             </tr>
           </thead>
           <tbody>
