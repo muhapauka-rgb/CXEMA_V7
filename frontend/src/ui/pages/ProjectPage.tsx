@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { useParams } from "react-router-dom"
-import { apiDelete, apiGet, apiPatch, apiPost } from "../api"
+import { API_BASE, apiDelete, apiGet, apiPatch, apiPost } from "../api"
 import { openNativePicker } from "../datePicker"
 import { formatNumberForInput, formatNumberValueForInput, parseInputNumber } from "../numberInput"
 
@@ -715,6 +715,12 @@ export default function ProjectPage() {
     } catch (e) {
       setError(String(e))
     }
+  }
+
+  function openEstimatePage() {
+    if (!Number.isFinite(projectId)) return
+    const url = `${API_BASE}/api/projects/${projectId}/estimate/page`
+    window.open(url, "_blank", "noopener,noreferrer")
   }
 
   async function saveProjectSettings() {
@@ -1857,6 +1863,12 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
             )}
 
             <div className="row" style={{ marginTop: 10 }}>
+              <button
+                className="btn"
+                onClick={openEstimatePage}
+              >
+                Смета
+              </button>
               <button
                 className="btn"
                 disabled={!sheetsReady}

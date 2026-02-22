@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .settings import settings
-from .routers import health, projects, overview, sheets, google_auth, life, discounts, settings as settings_router, backup, exports
+from .routers import health, projects, overview, sheets, google_auth, life, discounts, settings as settings_router, backup, exports, estimate
 from .backup_scheduler import start_auto_backup_scheduler, stop_auto_backup_scheduler
 
 app = FastAPI(title="CXEMA V7 API", version="0.1.0")
@@ -28,6 +28,7 @@ app.include_router(discounts.router)
 app.include_router(settings_router.router)
 app.include_router(backup.router)
 app.include_router(exports.router)
+app.include_router(estimate.router)
 
 
 @app.on_event("startup")
