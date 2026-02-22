@@ -2,15 +2,16 @@ from __future__ import annotations
 
 from datetime import datetime
 from html import escape
-from typing import Any
+from typing import Any, Optional, Set
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import ClientBillingAdjustment, ClientPaymentsPlan, ExpenseGroup, ExpenseItem, ItemMode, Project
+from ..utils import get_global_usn_settings
 
 router = APIRouter(prefix="/api/projects", tags=["estimate"])
 
@@ -51,6 +52,31 @@ def _item_base_total(item: ExpenseItem) -> float:
     return base
 
 
+def _percent_amount(base: float, percent: float) -> float:
+    value = _safe_num(base)
+    p = _safe_num(percent)
+    if value <= 0 or p <= 0:
+        return 0.0
+    return value * p / 100.0
+
+
+def _parse_group_ids(raw: Optional[str]) -> Set[int]:
+    if not raw:
+        return set()
+    out: Set[int] = set()
+    for part in raw.split(","):
+        token = part.strip()
+        if not token:
+            continue
+        try:
+            value = int(token)
+        except Exception:
+            continue
+        if value > 0:
+            out.add(value)
+    return out
+
+
 def _project_or_404(db: Session, project_id: int) -> Project:
     project = db.get(Project, project_id)
     if not project:
@@ -58,7 +84,12 @@ def _project_or_404(db: Session, project_id: int) -> Project:
     return project
 
 
-def _estimate_payload(db: Session, project_id: int) -> dict[str, Any]:
+def _estimate_payload(
+    db: Session,
+    project_id: int,
+    group_agency_ids: Optional[Set[int]] = None,
+    common_agency_enabled: bool = False,
+) -> dict[str, Any]:
     project = _project_or_404(db, project_id)
     groups = db.execute(
         select(ExpenseGroup)
@@ -87,6 +118,7 @@ def _estimate_payload(db: Session, project_id: int) -> dict[str, Any]:
     item_by_id = {int(it.id): it for it in items}
 
     expense_rows: list[dict[str, Any]] = []
+    group_totals: dict[int, float] = {int(g.id): 0.0 for g in groups}
     expenses_total = 0.0
     for it in items:
         if not bool(getattr(it, "include_in_estimate", True)):
@@ -98,6 +130,7 @@ def _estimate_payload(db: Session, project_id: int) -> dict[str, Any]:
         extra = _safe_num(it.extra_profit_amount) if bool(it.extra_profit_enabled) else 0.0
         row_total = base + extra - discount_amount
         expenses_total += row_total
+        group_totals[int(it.group_id)] = _safe_num(group_totals.get(int(it.group_id), 0.0)) + row_total
 
         parent_title = ""
         is_subitem = False
@@ -110,6 +143,7 @@ def _estimate_payload(db: Session, project_id: int) -> dict[str, Any]:
         expense_rows.append(
             {
                 "id": int(it.id),
+                "group_id": int(it.group_id),
                 "group": group_name_by_id.get(int(it.group_id), ""),
                 "title": it.title,
                 "parent_title": parent_title,
@@ -138,6 +172,39 @@ def _estimate_payload(db: Session, project_id: int) -> dict[str, Any]:
             }
         )
 
+    agency_percent = _safe_num(project.agency_fee_percent)
+    selected_group_agencies = group_agency_ids or set()
+    group_summaries: list[dict[str, Any]] = []
+    group_agency_total = 0.0
+    for g in groups:
+        gid = int(g.id)
+        base_total = _safe_num(group_totals.get(gid, 0.0))
+        agency_enabled = gid in selected_group_agencies
+        agency_amount = _percent_amount(base_total, agency_percent) if agency_enabled else 0.0
+        group_agency_total += agency_amount
+        if base_total == 0 and not agency_enabled:
+            continue
+        group_summaries.append(
+            {
+                "group_id": gid,
+                "group_name": g.name,
+                "base_total": base_total,
+                "agency_enabled": agency_enabled,
+                "agency_amount": agency_amount,
+                "total_with_agency": base_total + agency_amount,
+            }
+        )
+
+    common_agency_amount = (
+        _percent_amount(_safe_num(project.project_price_total), agency_percent)
+        if common_agency_enabled
+        else 0.0
+    )
+    expenses_before_usn = expenses_total + group_agency_total + common_agency_amount
+    _usn_mode, usn_rate = get_global_usn_settings(db)
+    usn_amount = _percent_amount(expenses_before_usn, usn_rate)
+    expenses_with_usn = expenses_before_usn + usn_amount
+
     return {
         "project": {
             "id": int(project.id),
@@ -149,11 +216,19 @@ def _estimate_payload(db: Session, project_id: int) -> dict[str, Any]:
             "generated_at": datetime.utcnow().isoformat(),
         },
         "expenses": expense_rows,
+        "group_summary": group_summaries,
         "payments_plan": payments_rows,
         "totals": {
             "expenses_total": expenses_total,
+            "group_agency_total": group_agency_total,
+            "common_agency_amount": common_agency_amount,
+            "expenses_before_usn": expenses_before_usn,
+            "usn_rate_percent": usn_rate,
+            "usn_amount": usn_amount,
+            "expenses_with_usn": expenses_with_usn,
             "payments_plan_total": payments_total,
-            "balance": payments_total - expenses_total,
+            "balance_before_usn": payments_total - expenses_before_usn,
+            "balance_with_usn": payments_total - expenses_with_usn,
         },
     }
 
@@ -162,6 +237,7 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
     project = payload["project"]
     expenses = payload["expenses"]
     payments = payload["payments_plan"]
+    group_summary = payload.get("group_summary", [])
     totals = payload["totals"]
 
     rows_expenses = []
@@ -213,6 +289,36 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
     if not rows_payments:
         rows_payments.append('<tr><td colspan="3" class="empty">Нет плановых поступлений</td></tr>')
 
+    group_rows = []
+    for row in group_summary:
+        group_name = escape(_fmt_plain(row["group_name"]))
+        base_total = escape(_fmt_money(row["base_total"]))
+        agency = escape(_fmt_money(row["agency_amount"])) if _safe_num(row["agency_amount"]) != 0 else ""
+        total_with_agency = escape(_fmt_money(row["total_with_agency"]))
+        group_rows.append(
+            f"""
+            <tr>
+              <td>{group_name}</td>
+              <td class="num">{base_total}</td>
+              <td class="num">{agency}</td>
+              <td class="num strong">{total_with_agency}</td>
+            </tr>
+            """
+        )
+    if _safe_num(totals.get("common_agency_amount")) > 0:
+        group_rows.append(
+            f"""
+            <tr>
+              <td><strong>Общие агентские</strong></td>
+              <td class="num">—</td>
+              <td class="num">{escape(_fmt_money(totals["common_agency_amount"]))}</td>
+              <td class="num strong">{escape(_fmt_money(totals["common_agency_amount"]))}</td>
+            </tr>
+            """
+        )
+    if not group_rows:
+        group_rows.append('<tr><td colspan="4" class="empty">Агентские по группам не включены</td></tr>')
+
     project_title = escape(_fmt_plain(project["title"]))
     organization = escape(_fmt_plain(project["organization"]))
     email = escape(_fmt_plain(project["email"]))
@@ -220,8 +326,13 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
     generated = escape(_fmt_plain(project["generated_at"]).replace("T", " ")[:19])
 
     expenses_total = escape(_fmt_money(totals["expenses_total"]))
+    expenses_before_usn = escape(_fmt_money(totals["expenses_before_usn"]))
+    usn_rate_percent = escape(_fmt_money(totals["usn_rate_percent"]).replace(",00", ""))
+    usn_amount = escape(_fmt_money(totals["usn_amount"]))
+    expenses_with_usn = escape(_fmt_money(totals["expenses_with_usn"]))
     payments_total = escape(_fmt_money(totals["payments_plan_total"]))
-    balance = escape(_fmt_money(totals["balance"]))
+    balance_before_usn = escape(_fmt_money(totals["balance_before_usn"]))
+    balance_with_usn = escape(_fmt_money(totals["balance_with_usn"]))
     project_price = escape(_fmt_money(project["project_price_total"]))
 
     return f"""<!doctype html>
@@ -269,6 +380,7 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
       gap:8px;
       align-items:start;
     }}
+    .stack {{ display:grid; gap:8px; }}
     .panel {{ border:1px solid var(--line); border-radius:10px; background:#fff; overflow:hidden; }}
     .panel-h {{ background:var(--head); color:var(--headText); padding:7px 10px; font-size:13px; font-weight:700; }}
     table {{ width:100%; border-collapse:collapse; table-layout:fixed; }}
@@ -320,9 +432,9 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
 
     <div class="totals-strip">
       <div class="total"><div class="k">Стоимость проекта</div><div class="v">{project_price}</div></div>
-      <div class="total"><div class="k">Расходы (в смету)</div><div class="v">{expenses_total}</div></div>
+      <div class="total"><div class="k">Расходы (строки)</div><div class="v">{expenses_total}</div></div>
       <div class="total"><div class="k">План по оплатам</div><div class="v">{payments_total}</div></div>
-      <div class="total"><div class="k">Разница</div><div class="v">{balance}</div></div>
+      <div class="total"><div class="k">Разница до УСН</div><div class="v">{balance_before_usn}</div></div>
     </div>
 
     <div class="layout">
@@ -348,21 +460,47 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
         </table>
       </section>
 
-      <section class="panel">
-        <div class="panel-h">План по доходам</div>
-        <table>
-          <thead>
-            <tr>
-              <th style="width:28%">Дата оплаты</th>
-              <th style="width:32%">Сумма</th>
-              <th>Примечание</th>
-            </tr>
-          </thead>
-          <tbody>
-            {''.join(rows_payments)}
-          </tbody>
-        </table>
-      </section>
+      <div class="stack">
+        <section class="panel">
+          <div class="panel-h">План по доходам</div>
+          <table>
+            <thead>
+              <tr>
+                <th style="width:28%">Дата оплаты</th>
+                <th style="width:32%">Сумма</th>
+                <th>Примечание</th>
+              </tr>
+            </thead>
+            <tbody>
+              {''.join(rows_payments)}
+            </tbody>
+          </table>
+        </section>
+
+        <section class="panel">
+          <div class="panel-h">Свод по группам (с агентскими)</div>
+          <table>
+            <thead>
+              <tr>
+                <th>Группа</th>
+                <th style="width:26%">Сумма группы</th>
+                <th style="width:26%">Агентские</th>
+                <th style="width:28%">Сумма с агентскими</th>
+              </tr>
+            </thead>
+            <tbody>
+              {''.join(group_rows)}
+            </tbody>
+          </table>
+        </section>
+      </div>
+    </div>
+
+    <div class="totals-strip" style="margin-top:8px">
+      <div class="total"><div class="k">Сумма (до УСН)</div><div class="v">{expenses_before_usn}</div></div>
+      <div class="total"><div class="k">УСН ({usn_rate_percent}%)</div><div class="v">{usn_amount}</div></div>
+      <div class="total"><div class="k">Сумма с УСН</div><div class="v">{expenses_with_usn}</div></div>
+      <div class="total"><div class="k">Разница с УСН</div><div class="v">{balance_with_usn}</div></div>
     </div>
 
     <div class="actions">
@@ -375,11 +513,31 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
 
 
 @router.get("/{project_id}/estimate/data")
-def estimate_data(project_id: int, db: Session = Depends(get_db)):
-    return _estimate_payload(db, project_id)
+def estimate_data(
+    project_id: int,
+    group_agency_ids: Optional[str] = Query(default=None),
+    common_agency: bool = Query(default=False),
+    db: Session = Depends(get_db),
+):
+    return _estimate_payload(
+        db,
+        project_id,
+        group_agency_ids=_parse_group_ids(group_agency_ids),
+        common_agency_enabled=bool(common_agency),
+    )
 
 
 @router.get("/{project_id}/estimate/page", response_class=HTMLResponse)
-def estimate_page(project_id: int, db: Session = Depends(get_db)):
-    payload = _estimate_payload(db, project_id)
+def estimate_page(
+    project_id: int,
+    group_agency_ids: Optional[str] = Query(default=None),
+    common_agency: bool = Query(default=False),
+    db: Session = Depends(get_db),
+):
+    payload = _estimate_payload(
+        db,
+        project_id,
+        group_agency_ids=_parse_group_ids(group_agency_ids),
+        common_agency_enabled=bool(common_agency),
+    )
     return HTMLResponse(content=_render_estimate_html(payload), media_type="text/html; charset=utf-8")
