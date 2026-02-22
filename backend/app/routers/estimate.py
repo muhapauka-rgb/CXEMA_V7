@@ -232,38 +232,75 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
   <title>Смета — {project_title}</title>
   <style>
     :root {{
-      --bg:#f5f7fa; --text:#172033; --muted:#5d687a; --line:#d6dce6; --head:#1f3f67; --headText:#fff;
+      --bg:#f7f8fb; --text:#172033; --muted:#5d687a; --line:#d6dce6; --head:#1f3f67; --headText:#fff;
     }}
     * {{ box-sizing:border-box; }}
-    body {{ margin:0; background:var(--bg); color:var(--text); font:14px/1.35 "Manrope","Segoe UI",Arial,sans-serif; }}
-    .page {{ max-width:1280px; margin:18px auto 30px; padding:0 18px; }}
-    .top {{ display:grid; grid-template-columns:1fr auto; align-items:end; gap:12px; margin-bottom:14px; }}
-    .h1 {{ margin:0; font-size:30px; font-weight:800; letter-spacing:-0.02em; }}
-    .meta {{ color:var(--muted); font-size:13px; }}
-    .cards {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin:12px 0 14px; }}
-    .card {{ border:1px solid var(--line); border-radius:12px; padding:10px 12px; background:#fff; }}
-    .card .k {{ color:var(--muted); font-size:12px; margin-bottom:5px; }}
-    .card .v {{ font-size:20px; font-weight:800; }}
-    .panel {{ border:1px solid var(--line); border-radius:14px; background:#fff; overflow:hidden; margin-bottom:12px; }}
-    .panel-h {{ background:var(--head); color:var(--headText); padding:10px 12px; font-size:16px; font-weight:700; }}
+    body {{ margin:0; background:var(--bg); color:var(--text); font:12.5px/1.25 "Manrope","Segoe UI",Arial,sans-serif; }}
+    .page {{ max-width:1400px; margin:8px auto 12px; padding:0 10px; }}
+    .top {{ display:grid; grid-template-columns:1fr auto; align-items:end; gap:10px; margin-bottom:8px; }}
+    .h1 {{ margin:0; font-size:24px; font-weight:800; letter-spacing:-0.01em; }}
+    .meta {{ color:var(--muted); font-size:11px; }}
+    .meta-line {{
+      display:grid;
+      grid-template-columns:repeat(4,minmax(0,1fr));
+      gap:8px;
+      margin:0 0 8px;
+      color:var(--muted);
+      font-size:11px;
+    }}
+    .meta-line strong {{ color:var(--text); font-weight:700; }}
+    .totals-strip {{
+      display:grid;
+      grid-template-columns:repeat(4,minmax(0,1fr));
+      gap:8px;
+      margin:0 0 8px;
+    }}
+    .total {{
+      border:1px solid var(--line);
+      border-radius:8px;
+      padding:6px 8px;
+      background:#fff;
+    }}
+    .total .k {{ color:var(--muted); font-size:11px; margin-bottom:2px; }}
+    .total .v {{ font-size:19px; font-weight:800; }}
+    .layout {{
+      display:grid;
+      grid-template-columns:2.2fr 1fr;
+      gap:8px;
+      align-items:start;
+    }}
+    .panel {{ border:1px solid var(--line); border-radius:10px; background:#fff; overflow:hidden; }}
+    .panel-h {{ background:var(--head); color:var(--headText); padding:7px 10px; font-size:13px; font-weight:700; }}
     table {{ width:100%; border-collapse:collapse; table-layout:fixed; }}
-    th, td {{ border:1px solid var(--line); padding:8px 10px; vertical-align:middle; }}
-    th {{ background:#eef3f9; color:#33445f; font-size:12px; font-weight:700; text-align:center; }}
+    th, td {{ border:1px solid var(--line); padding:5px 6px; vertical-align:middle; }}
+    th {{ background:#eef3f9; color:#33445f; font-size:11px; font-weight:700; text-align:center; line-height:1.15; }}
     td {{ background:#fff; }}
     td.num {{ text-align:right; font-variant-numeric:tabular-nums; }}
     td.center {{ text-align:center; }}
     td.strong {{ font-weight:700; }}
     .sub {{ color:#293a56; }}
-    .empty {{ text-align:center; color:var(--muted); padding:12px; }}
-    .footer {{ color:var(--muted); font-size:12px; margin-top:8px; }}
-    .actions {{ display:flex; gap:8px; margin-top:12px; }}
-    .btn {{ border:1px solid var(--line); border-radius:9px; background:#fff; color:var(--text); padding:7px 10px; font:inherit; font-weight:600; cursor:pointer; }}
-    @media (max-width:980px) {{ .cards {{ grid-template-columns:repeat(2,minmax(0,1fr)); }} }}
+    .empty {{ text-align:center; color:var(--muted); padding:9px; }}
+    .footer {{ color:var(--muted); font-size:10px; margin-top:6px; }}
+    .actions {{ display:flex; gap:8px; margin-top:8px; }}
+    .btn {{ border:1px solid var(--line); border-radius:7px; background:#fff; color:var(--text); padding:5px 8px; font:inherit; font-weight:600; cursor:pointer; }}
+    @media (max-width:1100px) {{
+      .layout {{ grid-template-columns:1fr; }}
+      .meta-line, .totals-strip {{ grid-template-columns:repeat(2,minmax(0,1fr)); }}
+    }}
     @media print {{
+      @page {{ size: A4 landscape; margin: 8mm; }}
       body {{ background:#fff; }}
       .page {{ max-width:none; margin:0; padding:0; }}
       .actions {{ display:none; }}
-      .panel, .card {{ break-inside:avoid; }}
+      .h1 {{ font-size:18px; }}
+      .meta {{ font-size:10px; }}
+      .meta-line, .totals-strip {{ gap:6px; margin-bottom:6px; }}
+      .total {{ padding:4px 6px; }}
+      .total .k {{ font-size:10px; }}
+      .total .v {{ font-size:15px; }}
+      .panel-h {{ font-size:12px; padding:6px 8px; }}
+      th, td {{ padding:3px 4px; font-size:10.5px; }}
+      .panel {{ break-inside:avoid; page-break-inside:avoid; }}
     }}
   </style>
 </head>
@@ -274,56 +311,58 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
       <div class="meta">Сформировано: {generated}</div>
     </div>
 
-    <div class="cards">
-      <div class="card"><div class="k">Организация</div><div class="v">{organization}</div></div>
-      <div class="card"><div class="k">Email</div><div class="v">{email}</div></div>
-      <div class="card"><div class="k">Телефон</div><div class="v">{phone}</div></div>
-      <div class="card"><div class="k">Стоимость проекта</div><div class="v">{project_price}</div></div>
+    <div class="meta-line">
+      <div>Организация: <strong>{organization}</strong></div>
+      <div>Email: <strong>{email}</strong></div>
+      <div>Телефон: <strong>{phone}</strong></div>
+      <div>Проект: <strong>#{project["id"]}</strong></div>
     </div>
 
-    <section class="panel">
-      <div class="panel-h">Расходы (в смету)</div>
-      <table>
-        <thead>
-          <tr>
-            <th style="width:13%">Группа</th>
-            <th style="width:22%">Статья</th>
-            <th style="width:12%">Дата</th>
-            <th style="width:8%">Шт</th>
-            <th style="width:12%">Цена за ед</th>
-            <th style="width:11%">База</th>
-            <th style="width:8%">Доп прибыль</th>
-            <th style="width:8%">Скидка</th>
-            <th style="width:12%">Итог строки</th>
-          </tr>
-        </thead>
-        <tbody>
-          {''.join(rows_expenses)}
-        </tbody>
-      </table>
-    </section>
+    <div class="totals-strip">
+      <div class="total"><div class="k">Стоимость проекта</div><div class="v">{project_price}</div></div>
+      <div class="total"><div class="k">Расходы (в смету)</div><div class="v">{expenses_total}</div></div>
+      <div class="total"><div class="k">План по оплатам</div><div class="v">{payments_total}</div></div>
+      <div class="total"><div class="k">Разница</div><div class="v">{balance}</div></div>
+    </div>
 
-    <section class="panel">
-      <div class="panel-h">План по доходам</div>
-      <table>
-        <thead>
-          <tr>
-            <th style="width:18%">Дата оплаты</th>
-            <th style="width:20%">Сумма</th>
-            <th>Примечание</th>
-          </tr>
-        </thead>
-        <tbody>
-          {''.join(rows_payments)}
-        </tbody>
-      </table>
-    </section>
+    <div class="layout">
+      <section class="panel">
+        <div class="panel-h">Расходы (в смету)</div>
+        <table>
+          <thead>
+            <tr>
+              <th style="width:13%">Группа</th>
+              <th style="width:19%">Статья</th>
+              <th style="width:11%">Дата</th>
+              <th style="width:6%">Шт</th>
+              <th style="width:11%">Цена за ед</th>
+              <th style="width:10%">База</th>
+              <th style="width:9%">Доп прибыль</th>
+              <th style="width:8%">Скидка</th>
+              <th style="width:13%">Итог строки</th>
+            </tr>
+          </thead>
+          <tbody>
+            {''.join(rows_expenses)}
+          </tbody>
+        </table>
+      </section>
 
-    <div class="cards">
-      <div class="card"><div class="k">Итого расходов (смета)</div><div class="v">{expenses_total}</div></div>
-      <div class="card"><div class="k">Планируемые поступления</div><div class="v">{payments_total}</div></div>
-      <div class="card"><div class="k">Разница (план - расходы)</div><div class="v">{balance}</div></div>
-      <div class="card"><div class="k">Проект</div><div class="v">#{project["id"]}</div></div>
+      <section class="panel">
+        <div class="panel-h">План по доходам</div>
+        <table>
+          <thead>
+            <tr>
+              <th style="width:28%">Дата оплаты</th>
+              <th style="width:32%">Сумма</th>
+              <th>Примечание</th>
+            </tr>
+          </thead>
+          <tbody>
+            {''.join(rows_payments)}
+          </tbody>
+        </table>
+      </section>
     </div>
 
     <div class="actions">
@@ -344,4 +383,3 @@ def estimate_data(project_id: int, db: Session = Depends(get_db)):
 def estimate_page(project_id: int, db: Session = Depends(get_db)):
     payload = _estimate_payload(db, project_id)
     return HTMLResponse(content=_render_estimate_html(payload), media_type="text/html; charset=utf-8")
-
