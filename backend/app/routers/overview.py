@@ -14,6 +14,8 @@ from ..utils import (
     planned_to_date,
     project_pocket_monthly_components,
     expense_breakdown_to_date,
+    get_global_usn_settings,
+    usn_amount_from_base,
 )
 
 router = APIRouter(prefix="/api/overview", tags=["overview"])
@@ -45,6 +47,7 @@ def month_range(db: Session = Depends(get_db)):
 @router.get("/snapshot", response_model=OverviewSnapshot)
 def snapshot(at: date = Query(..., description="YYYY-MM-DD"), db: Session = Depends(get_db)):
     projects = db.execute(select(Project)).scalars().all()
+    usn_mode, usn_rate = get_global_usn_settings(db)
 
     active = []
     for p in projects:
@@ -65,12 +68,22 @@ def snapshot(at: date = Query(..., description="YYYY-MM-DD"), db: Session = Depe
         r = received_to_date(db, p.id, at)
         pl = planned_to_date(db, p.id, at)
         expected = float(p.expected_from_client_total)
-        spent_base, _ = expense_breakdown_to_date(db, p.id, at)
+        spent_base, _, discount_total = expense_breakdown_to_date(db, p.id, at)
         spent = float(spent_base)
-        pocket_monthly = project_pocket_monthly_components(db, p, at)
+        pocket_monthly = project_pocket_monthly_components(
+            db,
+            p,
+            at,
+            usn_mode=usn_mode,
+            usn_rate_percent=usn_rate,
+        )
         agency = sum(float(v.get("agency", 0.0)) for v in pocket_monthly.values())
         ep = sum(float(v.get("extra", 0.0)) for v in pocket_monthly.values())
-        in_pocket = agency + ep
+        usn_paid = sum(float(v.get("tax", 0.0)) for v in pocket_monthly.values())
+        usn_base = r if usn_mode == "LEGAL" else (spent + agency)
+        usn_total = max(usn_paid, usn_amount_from_base(usn_base, usn_rate))
+        spent = float(spent) + float(usn_total)
+        in_pocket = agency + ep - discount_total
         balance = r - spent
 
         received_total += r

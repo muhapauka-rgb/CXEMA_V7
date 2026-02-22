@@ -109,23 +109,6 @@ function snapshotAtFromMonth(selected: string): string {
   return `${at.getFullYear()}-${z(at.getMonth() + 1)}-${z(at.getDate())}`
 }
 
-function RefreshIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-      <path d="M21 3v6h-6" />
-    </svg>
-  )
-}
-
-function GearIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M19.4 13.5c.04-.33.1-.67.1-1s-.06-.67-.1-1l2.12-1.66a.52.52 0 0 0 .12-.65l-2-3.46a.5.5 0 0 0-.6-.22l-2.49 1a7.23 7.23 0 0 0-1.73-1l-.38-2.65A.5.5 0 0 0 14 2h-4a.5.5 0 0 0-.49.42l-.38 2.65c-.62.25-1.2.58-1.73 1l-2.49-1a.5.5 0 0 0-.6.22l-2 3.46a.5.5 0 0 0 .12.65L4.6 11.5c-.04.33-.1.67-.1 1s.06.67.1 1L2.48 15.16a.52.52 0 0 0-.12.65l2 3.46a.5.5 0 0 0 .6.22l2.49-1c.53.42 1.11.76 1.73 1l.38 2.65A.5.5 0 0 0 10 22h4a.5.5 0 0 0 .49-.42l.38-2.65c.62-.25 1.2-.58 1.73-1l2.49 1a.5.5 0 0 0 .6-.22l2-3.46a.5.5 0 0 0-.12-.65l-2.17-1.1ZM12 16a4 4 0 1 1 0-8 4 4 0 0 1 0 8Z" />
-    </svg>
-  )
-}
-
 export default function OverviewPage() {
   const [search, setSearch] = useSearchParams()
   const [snapshot, setSnapshot] = useState<OverviewSnapshot | null>(null)
@@ -232,86 +215,80 @@ export default function OverviewPage() {
   return (
     <>
     <div className={`grid ${createOpen ? "page-content-muted" : ""}`}>
-      <div className="panel top-panel top-panel-sticky">
-        <div className="timeline-panel">
-          <div className="timeline-head">
-            <button
-              className="timeline-current-month"
-              onClick={() => openNativePicker(monthPickerRef.current, true)}
-            >
-              {monthLabelRu(selectedMonth)}
-            </button>
-            <div className="row timeline-actions">
-              <button className="btn icon-btn icon-stroke" aria-label="Обновить" title="Обновить" onClick={() => void loadAll()}>
-                <RefreshIcon />
+      <div className="sticky-stack">
+        <div className="panel top-panel">
+          <div className="timeline-panel">
+            <div className="timeline-head">
+              <button
+                className="timeline-current-month"
+                onClick={() => openNativePicker(monthPickerRef.current, true)}
+              >
+                {monthLabelRu(selectedMonth)}
               </button>
-              <Link className="btn icon-btn settings-icon-btn" to="/settings" aria-label="Глобальные настройки" title="Глобальные настройки">
-                <GearIcon />
-              </Link>
             </div>
-          </div>
-          <div className="timeline-current-row">
+            <div className="timeline-current-row">
+              <input
+                ref={monthPickerRef}
+                className="timeline-month-picker-hidden"
+                type="month"
+                value={selectedMonth}
+                min={months[0] || undefined}
+                max={months[months.length - 1] || undefined}
+                onChange={(e) => {
+                  if (months.includes(e.target.value)) setSelectedMonth(e.target.value)
+                }}
+              />
+            </div>
             <input
-              ref={monthPickerRef}
-              className="timeline-month-picker-hidden"
-              type="month"
-              value={selectedMonth}
-              min={months[0] || undefined}
-              max={months[months.length - 1] || undefined}
+              className="timeline-range"
+              type="range"
+              min={0}
+              max={Math.max(0, months.length - 1)}
+              step={1}
+              value={selectedIdx}
               onChange={(e) => {
-                if (months.includes(e.target.value)) setSelectedMonth(e.target.value)
+                const idx = Number(e.target.value)
+                setSelectedMonth(months[idx] || months[months.length - 1])
               }}
             />
           </div>
-          <input
-            className="timeline-range"
-            type="range"
-            min={0}
-            max={Math.max(0, months.length - 1)}
-            step={1}
-            value={selectedIdx}
-            onChange={(e) => {
-              const idx = Number(e.target.value)
-              setSelectedMonth(months[idx] || months[months.length - 1])
-            }}
-          />
         </div>
-      </div>
 
-      {snapshot && (
-        <div className="overview-kpi-strip">
-          <div className="kpi-card">
-            <div className="muted">Проекты</div>
-            <div className="kpi-value">{snapshot.totals.active_projects_count}</div>
-          </div>
-          <div className="kpi-card">
-            <div className="muted">Получено</div>
-            <div className="kpi-value">{toMoney(snapshot.totals.received_total)}</div>
-          </div>
-          <div className="kpi-card">
-            <div className="muted">Потрачено</div>
-            <div className="kpi-value">{toMoney(snapshot.totals.spent_total)}</div>
-          </div>
-          <div className="kpi-card">
-            <div className="muted">Агентские</div>
-            <div className="kpi-value">{toMoney(snapshot.totals.agency_fee_to_date)}</div>
-          </div>
-          <div className="kpi-card">
-            <div className="muted">Доп прибыль</div>
-            <div className="kpi-value">{toMoney(snapshot.totals.extra_profit_to_date)}</div>
-          </div>
-          <div className="kpi-card">
-            <div className="muted">Всего в кармане</div>
-            <div className="kpi-value accent">{toMoney(snapshot.totals.in_pocket_to_date)}</div>
-          </div>
-          <div className="kpi-card">
-            <div className="muted">Баланс</div>
-            <div className={`kpi-value ${snapshot.totals.balance_total >= 0 ? "ok" : "bad"}`}>
-              {toMoney(snapshot.totals.balance_total)}
+        {snapshot && (
+          <div className="overview-kpi-strip">
+            <div className="kpi-card">
+              <div className="muted">Проекты</div>
+              <div className="kpi-value">{snapshot.totals.active_projects_count}</div>
+            </div>
+            <div className="kpi-card">
+              <div className="muted">Получено</div>
+              <div className="kpi-value">{toMoney(snapshot.totals.received_total)}</div>
+            </div>
+            <div className="kpi-card">
+              <div className="muted">Потрачено</div>
+              <div className="kpi-value">{toMoney(snapshot.totals.spent_total)}</div>
+            </div>
+            <div className="kpi-card">
+              <div className="muted">Агентские</div>
+              <div className="kpi-value">{toMoney(snapshot.totals.agency_fee_to_date)}</div>
+            </div>
+            <div className="kpi-card">
+              <div className="muted">Доп прибыль</div>
+              <div className="kpi-value">{toMoney(snapshot.totals.extra_profit_to_date)}</div>
+            </div>
+            <div className="kpi-card">
+              <div className="muted">Всего в кармане</div>
+              <div className="kpi-value accent">{toMoney(snapshot.totals.in_pocket_to_date)}</div>
+            </div>
+            <div className="kpi-card">
+              <div className="muted">Баланс</div>
+              <div className={`kpi-value ${snapshot.totals.balance_total >= 0 ? "ok" : "bad"}`}>
+                {toMoney(snapshot.totals.balance_total)}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       <div className="classic-layout">
         <div className="panel">
@@ -408,7 +385,8 @@ export default function OverviewPage() {
             <div className="h1">Добавить проект</div>
             <button
               type="button"
-              className="btn"
+              className="btn icon-btn modal-close-btn"
+              aria-label="Закрыть окно"
               disabled={creating}
               onClick={() => {
                 setSearch((prev) => {
@@ -418,7 +396,7 @@ export default function OverviewPage() {
                 })
               }}
             >
-              Закрыть
+              ×
             </button>
           </div>
 

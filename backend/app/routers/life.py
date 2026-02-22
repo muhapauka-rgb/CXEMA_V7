@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import Project
 from ..schemas import LifePeriod, LifePreviousMonthOut, LifeProjectBreakdown
-from ..utils import project_pocket_monthly_components
+from ..utils import project_pocket_monthly_components, get_global_usn_settings
 
 router = APIRouter(prefix="/api/life", tags=["life"])
 
@@ -113,11 +113,18 @@ def _life_for_month(
 
     projects = db.execute(select(Project)).scalars().all()
     project_by_id = {p.id: p for p in projects}
+    usn_mode, usn_rate = get_global_usn_settings(db)
 
     # Monthly inflow to "карман" by project after expense-priority logic.
     inflow_by_month_project: DefaultDict[str, DefaultDict[int, float]] = defaultdict(lambda: defaultdict(float))
     for project in projects:
-        monthly = project_pocket_monthly_components(db, project, as_of)
+        monthly = project_pocket_monthly_components(
+            db,
+            project,
+            as_of,
+            usn_mode=usn_mode,
+            usn_rate_percent=usn_rate,
+        )
         for month_key, amount in monthly.items():
             in_pocket_amount = float(amount.get("in_pocket", 0.0))
             if in_pocket_amount <= 0:

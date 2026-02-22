@@ -76,6 +76,8 @@ class ItemCreate(BaseModel):
     include_in_estimate: bool = True
     extra_profit_enabled: bool = False
     extra_profit_amount: float = Field(default=0.0, ge=0)
+    discount_enabled: bool = False
+    discount_amount: float = 0.0
     planned_pay_date: Optional[date] = None
 
 class ItemUpdate(BaseModel):
@@ -89,6 +91,8 @@ class ItemUpdate(BaseModel):
     include_in_estimate: Optional[bool] = None
     extra_profit_enabled: Optional[bool] = None
     extra_profit_amount: Optional[float] = Field(default=None, ge=0)
+    discount_enabled: Optional[bool] = None
+    discount_amount: Optional[float] = None
     planned_pay_date: Optional[date] = None
 
 class ItemOut(BaseModel):
@@ -105,6 +109,8 @@ class ItemOut(BaseModel):
     include_in_estimate: bool
     extra_profit_enabled: bool
     extra_profit_amount: float
+    discount_enabled: bool = False
+    discount_amount: float = 0.0
     planned_pay_date: Optional[date]
 
     class Config:
@@ -232,11 +238,32 @@ class GoogleAuthCallbackOut(BaseModel):
     connected: bool
     message: str
 
+
+class AppSettingsOut(BaseModel):
+    id: int
+    usn_mode: str
+    usn_rate_percent: float
+    backup_frequency: str
+    last_backup_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AppSettingsUpdate(BaseModel):
+    usn_mode: Optional[str] = None
+    usn_rate_percent: Optional[float] = Field(default=None, ge=0)
+    backup_frequency: Optional[str] = None
+
 class ProjectComputed(BaseModel):
     project_id: int
     expenses_total: float
     agency_fee: float
     extra_profit_total: float
+    discount_total: float = 0.0
+    usn_tax: float = 0.0
     in_pocket: float
     diff: float
 
@@ -301,3 +328,25 @@ class LifePreviousMonthOut(BaseModel):
     reserve_used: float
     savings_total: float
     projects: List[LifeProjectBreakdown]
+
+
+class DiscountEntryOut(BaseModel):
+    project_id: int
+    project_title: str
+    organization: Optional[str] = None
+    item_id: int
+    item_title: str
+    item_date: Optional[date] = None
+    discount_amount: float
+
+
+class DiscountCounterpartyOut(BaseModel):
+    organization: str
+    discount_total: float
+
+
+class DiscountSummaryOut(BaseModel):
+    as_of: date
+    total_discount: float
+    entries: List[DiscountEntryOut]
+    counterparties: List[DiscountCounterpartyOut]
