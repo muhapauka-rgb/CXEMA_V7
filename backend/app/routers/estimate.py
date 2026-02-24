@@ -413,6 +413,7 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Смета — {project_title}</title>
   <style>
+    @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;800&family=Roboto+Mono:wght@400;500;700&display=swap');
     :root {{
       --bg:#f4f4f4; --text:#111111; --muted:#555555; --line:#cfcfcf; --head:#000000; --headText:#ffffff;
     }}
@@ -464,7 +465,7 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
     }}
     .stack {{ display:grid; gap:8px; }}
     .panel {{ border:1px solid var(--line); border-radius:10px; background:#fff; overflow:hidden; }}
-    .panel-h {{ background:var(--head); color:var(--headText); padding:7px 10px; font-size:13px; font-weight:700; }}
+    .panel-h {{ background:var(--head); color:var(--headText); padding:7px 10px; font-size:13px; font-weight:700; font-family:"Roboto","Segoe UI",Arial,sans-serif; }}
     table {{ width:100%; border-collapse:collapse; table-layout:fixed; font-family:"Roboto Mono","Consolas","Menlo","Monaco",monospace; }}
     th, td {{ border:1px solid var(--line); padding:5px 6px; vertical-align:middle; }}
     th {{ background:#f0f0f0; color:#202020; font-size:11px; font-weight:700; text-align:center; line-height:1.15; }}
@@ -481,7 +482,10 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
     tbody tr:first-child.group-title-row td {{ border-top-width:1px; }}
     .footer {{ color:var(--muted); font-size:10px; margin-top:6px; }}
     .actions {{ display:flex; gap:8px; margin-top:8px; }}
-    .btn {{ border:1px solid var(--line); border-radius:7px; background:#fff; color:var(--text); padding:5px 8px; font:inherit; font-weight:600; cursor:pointer; }}
+    .btn {{ border:1px solid var(--line); border-radius:7px; background:#fff; color:var(--text); padding:5px 8px; font:inherit; font-weight:600; cursor:pointer; font-family:"Roboto","Segoe UI",Arial,sans-serif; }}
+    .top, .meta, .meta-line, .totals-strip, .total, .footer, .actions {{
+      font-family:"Roboto","Segoe UI",Arial,sans-serif;
+    }}
     @media (max-width:1100px) {{
       .layout {{ grid-template-columns:1fr; }}
       .totals-layout {{ grid-template-columns:1fr; }}
