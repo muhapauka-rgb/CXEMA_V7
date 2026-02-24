@@ -417,7 +417,7 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
       --bg:#f4f4f4; --text:#111111; --muted:#555555; --line:#cfcfcf; --head:#000000; --headText:#ffffff;
     }}
     * {{ box-sizing:border-box; }}
-    body {{ margin:0; background:var(--bg); color:var(--text); font:12.5px/1.25 "Manrope","Segoe UI",Arial,sans-serif; }}
+    body {{ margin:0; background:var(--bg); color:var(--text); font:12.5px/1.25 "Roboto","Segoe UI",Arial,sans-serif; }}
     .page {{ max-width:1400px; margin:8px auto 12px; padding:0 10px; }}
     .top {{ display:grid; grid-template-columns:1fr auto; align-items:end; gap:10px; margin-bottom:8px; }}
     .h1 {{ margin:0; font-size:24px; font-weight:800; letter-spacing:-0.01em; }}
@@ -465,7 +465,7 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
     .stack {{ display:grid; gap:8px; }}
     .panel {{ border:1px solid var(--line); border-radius:10px; background:#fff; overflow:hidden; }}
     .panel-h {{ background:var(--head); color:var(--headText); padding:7px 10px; font-size:13px; font-weight:700; }}
-    table {{ width:100%; border-collapse:collapse; table-layout:fixed; }}
+    table {{ width:100%; border-collapse:collapse; table-layout:fixed; font-family:"Roboto Mono","Consolas","Menlo","Monaco",monospace; }}
     th, td {{ border:1px solid var(--line); padding:5px 6px; vertical-align:middle; }}
     th {{ background:#f0f0f0; color:#202020; font-size:11px; font-weight:700; text-align:center; line-height:1.15; }}
     td {{ background:#fff; }}
