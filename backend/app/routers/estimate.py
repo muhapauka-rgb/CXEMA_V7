@@ -466,7 +466,7 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
     }}
     .stack {{ display:grid; gap:8px; }}
     .panel {{ border:1px solid var(--line); border-radius:10px; background:#fff; overflow:hidden; }}
-    .expenses-panel {{ border-bottom:0; }}
+    .expenses-panel {{ border-left:0; border-right:0; border-bottom:0; border-radius:0; }}
     .panel-h {{ background:var(--head); color:var(--headText); padding:7px 10px; font-size:13px; font-weight:700; font-family:"Roboto","Segoe UI",Arial,sans-serif; }}
     table {{ width:100%; border-collapse:collapse; table-layout:fixed; font-family:"Roboto Mono","Consolas","Menlo","Monaco",monospace; }}
     th, td {{ border:1px solid var(--line); padding:5px 6px; vertical-align:middle; }}
@@ -478,7 +478,7 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
     .sub {{ color:#303030; }}
     .empty {{ text-align:center; color:var(--muted); padding:9px; }}
     .group-title-row td {{ background:#000; color:#fff; font-weight:700; border-top:0 !important; }}
-    .sum-row td {{ background:#fafafa; border-bottom:0 !important; }}
+    .sum-row td {{ background:#fafafa; border-bottom:1px solid var(--line) !important; }}
     .group-gap td {{
       border:0 !important;
       padding:0;
@@ -486,7 +486,6 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
       background:var(--bg);
       line-height:0;
     }}
-    .expenses-panel tbody tr:last-child td {{ border-bottom:0 !important; }}
     .footer {{ color:var(--muted); font-size:10px; margin-top:6px; }}
     .actions {{ display:flex; gap:8px; margin-top:8px; }}
     .btn {{ border:1px solid var(--line); border-radius:7px; background:#fff; color:var(--text); padding:5px 8px; font:inherit; font-weight:600; cursor:pointer; font-family:"Roboto","Segoe UI",Arial,sans-serif; }}
