@@ -387,7 +387,6 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
             </tr>
             """
         )
-        expense_rows.append('<tr class="group-gap"><td colspan="4"></td></tr>')
 
     if not expense_rows:
         expense_rows.append('<tr><td colspan="4" class="empty">Нет строк, отмеченных в смету</td></tr>')
@@ -466,7 +465,6 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
     }}
     .stack {{ display:grid; gap:8px; }}
     .panel {{ border:1px solid var(--line); border-radius:10px; background:#fff; overflow:hidden; }}
-    .expenses-panel {{ border-bottom:0; }}
     .panel-h {{ background:var(--head); color:var(--headText); padding:7px 10px; font-size:13px; font-weight:700; font-family:"Roboto","Segoe UI",Arial,sans-serif; }}
     table {{ width:100%; border-collapse:collapse; table-layout:fixed; font-family:"Roboto Mono","Consolas","Menlo","Monaco",monospace; }}
     th, td {{ border:1px solid var(--line); padding:5px 6px; vertical-align:middle; }}
@@ -477,16 +475,11 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
     td.strong {{ font-weight:700; }}
     .sub {{ color:#303030; }}
     .empty {{ text-align:center; color:var(--muted); padding:9px; }}
-    .group-title-row td {{ background:#000; color:#fff; font-weight:700; border-top:0 !important; }}
-    .sum-row td {{ background:#fafafa; border-bottom:0 !important; }}
-    .group-gap td {{
-      border:0 !important;
-      padding:0;
-      height:42px;
-      background:var(--bg);
-      line-height:0;
-    }}
-    .expenses-panel tbody tr:last-child td {{ border-bottom:0 !important; }}
+    .group-title-row td {{ background:#000; color:#fff; font-weight:700; }}
+    .sum-row td {{ background:#fafafa; }}
+    .agency-row td {{ border-top:10px solid #fff; }}
+    .group-title-row td {{ border-top:14px solid #fff; }}
+    tbody tr:first-child.group-title-row td {{ border-top-width:1px; }}
     .footer {{ color:var(--muted); font-size:10px; margin-top:6px; }}
     .actions {{ display:flex; gap:8px; margin-top:8px; }}
     .btn {{ border:1px solid var(--line); border-radius:7px; background:#fff; color:var(--text); padding:5px 8px; font:inherit; font-weight:600; cursor:pointer; font-family:"Roboto","Segoe UI",Arial,sans-serif; }}
@@ -537,7 +530,7 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
     </div>
 
     <div class="layout">
-      <section class="panel expenses-panel">
+      <section class="panel">
         <div class="panel-h">Расходы</div>
         <table>
           <thead>
