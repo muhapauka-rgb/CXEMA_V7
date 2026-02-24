@@ -307,23 +307,26 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
         rows_payments.append('<tr><td colspan="4" class="empty">Нет оплат</td></tr>')
 
     agency_percent = escape(_fmt_money(project.get("agency_fee_percent", 0)).replace(",00", ""))
-    group_panels: list[str] = []
+    expense_rows: list[str] = []
     for group in expense_groups:
-        group_rows: list[str] = []
+        group_name = escape(_fmt_plain(group.get("group_name")))
+        expense_rows.append(f'<tr class="group-title-row"><td colspan="4"><strong>{group_name}</strong></td></tr>')
+
         rows = group.get("rows", [])
+        if not rows:
+            expense_rows.append('<tr><td colspan="4" class="empty">Нет строк, отмеченных в смету</td></tr>')
+
         for row in rows:
             title = escape(str(row["title"]))
             if row["is_subitem"]:
                 title = f'<span class="sub">↳ {title}</span>'
-            date = escape(_fmt_plain(row["date"]))
             qty = "" if row["qty"] is None else escape(_fmt_money(row["qty"]).replace(",00", ""))
             unit_price = "" if row["unit_price"] is None else escape(_fmt_money(row["unit_price"]))
             row_sum = escape(_fmt_money(row["sum"]))
-            group_rows.append(
+            expense_rows.append(
                 f"""
                 <tr>
                   <td>{title}</td>
-                  <td class="center">{date}</td>
                   <td class="num">{qty}</td>
                   <td class="num">{unit_price}</td>
                   <td class="num strong">{row_sum}</td>
@@ -331,16 +334,12 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
                 """
             )
 
-        if not group_rows:
-            group_rows.append('<tr><td colspan="5" class="empty">Нет строк, отмеченных в смету</td></tr>')
-
         agency_amount = _safe_num(group.get("agency_amount"))
         if agency_amount > 0:
-            group_rows.append(
+            expense_rows.append(
                 f"""
                 <tr class="sum-row">
                   <td><strong>Агентские ({agency_percent}%)</strong></td>
-                  <td class="center">авто</td>
                   <td></td>
                   <td></td>
                   <td class="num strong">{escape(_fmt_money(agency_amount))}</td>
@@ -348,11 +347,10 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
                 """
             )
 
-        group_rows.append(
+        expense_rows.append(
             f"""
             <tr class="sum-row">
               <td><strong>Итого по группе</strong></td>
-              <td></td>
               <td></td>
               <td></td>
               <td class="num strong">{escape(_fmt_money(group.get("total_with_agency", 0.0)))}</td>
@@ -360,74 +358,22 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
             """
         )
 
-        group_panels.append(
-            f"""
-            <section class="panel group-panel">
-              <div class="panel-h">{escape(_fmt_plain(group.get("group_name")))}</div>
-              <table>
-                <thead>
-                  <tr>
-                    <th style="width:34%">Статья</th>
-                    <th style="width:16%">Дата</th>
-                    <th style="width:10%">Шт</th>
-                    <th style="width:20%">Цена за ед</th>
-                    <th style="width:20%">Сумма</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {''.join(group_rows)}
-                </tbody>
-              </table>
-            </section>
-            """
-        )
-
     common_agency_amount = _safe_num(totals.get("common_agency_amount"))
     if common_agency_amount > 0:
-        group_panels.append(
+        expense_rows.append('<tr class="group-title-row"><td colspan="4"><strong>Общие агентские</strong></td></tr>')
+        expense_rows.append(
             f"""
-            <section class="panel group-panel">
-              <div class="panel-h">Общие агентские</div>
-              <table>
-                <thead>
-                  <tr>
-                    <th style="width:34%">Статья</th>
-                    <th style="width:16%">Дата</th>
-                    <th style="width:10%">Шт</th>
-                    <th style="width:20%">Цена за ед</th>
-                    <th style="width:20%">Сумма</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr class="sum-row">
-                    <td><strong>Общие агентские ({agency_percent}%)</strong></td>
-                    <td class="center">авто</td>
-                    <td></td>
-                    <td></td>
-                    <td class="num strong">{escape(_fmt_money(common_agency_amount))}</td>
-                  </tr>
-                  <tr class="sum-row">
-                    <td><strong>Итого</strong></td>
-                    <td></td>
-                    <td></td>
-                    <td></td>
-                    <td class="num strong">{escape(_fmt_money(common_agency_amount))}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </section>
+            <tr class="sum-row">
+              <td><strong>Общие агентские ({agency_percent}%)</strong></td>
+              <td></td>
+              <td></td>
+              <td class="num strong">{escape(_fmt_money(common_agency_amount))}</td>
+            </tr>
             """
         )
 
-    if not group_panels:
-        group_panels.append(
-            """
-            <section class="panel group-panel">
-              <div class="panel-h">Расходы по группам</div>
-              <div class="empty">Нет строк, отмеченных в смету</div>
-            </section>
-            """
-        )
+    if not expense_rows:
+        expense_rows.append('<tr><td colspan="4" class="empty">Нет строк, отмеченных в смету</td></tr>')
 
     project_title = escape(_fmt_plain(project["title"]))
     organization = escape(_fmt_plain(project["organization"]))
@@ -452,7 +398,7 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
   <title>Смета — {project_title}</title>
   <style>
     :root {{
-      --bg:#f7f8fb; --text:#172033; --muted:#5d687a; --line:#d6dce6; --head:#1f3f67; --headText:#fff;
+      --bg:#f4f4f4; --text:#111111; --muted:#555555; --line:#cfcfcf; --head:#000000; --headText:#ffffff;
     }}
     * {{ box-sizing:border-box; }}
     body {{ margin:0; background:var(--bg); color:var(--text); font:12.5px/1.25 "Manrope","Segoe UI",Arial,sans-serif; }}
@@ -490,20 +436,19 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
       align-items:start;
     }}
     .stack {{ display:grid; gap:8px; }}
-    .groups-stack {{ display:grid; gap:8px; }}
     .panel {{ border:1px solid var(--line); border-radius:10px; background:#fff; overflow:hidden; }}
     .panel-h {{ background:var(--head); color:var(--headText); padding:7px 10px; font-size:13px; font-weight:700; }}
-    .group-panel .panel-h {{ font-size:12.5px; }}
     table {{ width:100%; border-collapse:collapse; table-layout:fixed; }}
     th, td {{ border:1px solid var(--line); padding:5px 6px; vertical-align:middle; }}
-    th {{ background:#eef3f9; color:#33445f; font-size:11px; font-weight:700; text-align:center; line-height:1.15; }}
+    th {{ background:#f0f0f0; color:#202020; font-size:11px; font-weight:700; text-align:center; line-height:1.15; }}
     td {{ background:#fff; }}
     td.num {{ text-align:right; font-variant-numeric:tabular-nums; }}
     td.center {{ text-align:center; }}
     td.strong {{ font-weight:700; }}
-    .sub {{ color:#293a56; }}
+    .sub {{ color:#303030; }}
     .empty {{ text-align:center; color:var(--muted); padding:9px; }}
-    .sum-row td {{ background:#f8fbff; }}
+    .group-title-row td {{ background:#000; color:#fff; font-weight:700; }}
+    .sum-row td {{ background:#fafafa; }}
     .footer {{ color:var(--muted); font-size:10px; margin-top:6px; }}
     .actions {{ display:flex; gap:8px; margin-top:8px; }}
     .btn {{ border:1px solid var(--line); border-radius:7px; background:#fff; color:var(--text); padding:5px 8px; font:inherit; font-weight:600; cursor:pointer; }}
@@ -550,8 +495,21 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
     </div>
 
     <div class="layout">
-      <section class="groups-stack">
-        {''.join(group_panels)}
+      <section class="panel">
+        <div class="panel-h">Расходы по группам</div>
+        <table>
+          <thead>
+            <tr>
+              <th style="width:46%">Статья</th>
+              <th style="width:14%">Шт</th>
+              <th style="width:20%">Цена за ед</th>
+              <th style="width:20%">Сумма</th>
+            </tr>
+          </thead>
+          <tbody>
+            {''.join(expense_rows)}
+          </tbody>
+        </table>
       </section>
 
       <section class="stack">
