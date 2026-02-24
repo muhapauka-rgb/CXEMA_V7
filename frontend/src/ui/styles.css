@@ -1245,6 +1245,66 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   margin: 12px 0;
 }
 
+.settings-modal-card {
+  padding: 16px 18px;
+}
+
+.settings-modal-card .h1 {
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+
+.settings-modal-layout {
+  display: grid;
+  gap: 14px;
+}
+
+.settings-section-block {
+  display: grid;
+  gap: 10px;
+  padding-bottom: 2px;
+}
+
+.settings-section-title {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text);
+}
+
+.settings-actions-row {
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.settings-tax-row {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(180px, 220px) auto;
+  align-items: end;
+}
+
+.settings-inline-note {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.settings-status-ok,
+.settings-status-error {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.settings-status-ok {
+  color: var(--ok);
+}
+
+.settings-status-error {
+  color: var(--bad);
+}
+
 .settings-field {
   display: grid;
   gap: 6px;
@@ -1322,6 +1382,10 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 
   .backup-grid-frequency,
   .backup-grid-restore {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-tax-row {
     grid-template-columns: 1fr;
   }
 
