@@ -43,6 +43,38 @@ def _fmt_date(value: Any) -> str:
         return str(value)
 
 
+def _fmt_date_long(value: Any) -> str:
+    if value is None:
+        return "—"
+    months = [
+        "января",
+        "февраля",
+        "марта",
+        "апреля",
+        "мая",
+        "июня",
+        "июля",
+        "августа",
+        "сентября",
+        "октября",
+        "ноября",
+        "декабря",
+    ]
+    dt_obj: Optional[date] = None
+    if isinstance(value, datetime):
+        dt_obj = value.date()
+    elif isinstance(value, date):
+        dt_obj = value
+    else:
+        try:
+            dt_obj = datetime.strptime(str(value), "%Y-%m-%d").date()
+        except Exception:
+            return str(value)
+    if not dt_obj:
+        return "—"
+    return f"{dt_obj.day} {months[dt_obj.month - 1]} {dt_obj.year}"
+
+
 def _item_base_total(item: ExpenseItem) -> float:
     base = _safe_num(item.base_total)
     if item.mode == ItemMode.QTY_PRICE and item.unit_price_base is not None:
@@ -289,22 +321,20 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
 
     rows_payments = []
     for row in payments:
-        date = escape(_fmt_plain(row["pay_date"]))
+        date = escape(_fmt_date_long(row["pay_date"]))
         amount = escape(_fmt_money(row["amount"]))
         status = escape(_fmt_plain(row.get("status")))
-        note = escape(_fmt_plain(row["note"]))
         rows_payments.append(
             f"""
             <tr>
               <td class="center">{date}</td>
               <td class="num strong">{amount}</td>
               <td class="center">{status}</td>
-              <td>{note}</td>
             </tr>
             """
         )
     if not rows_payments:
-        rows_payments.append('<tr><td colspan="4" class="empty">Нет оплат</td></tr>')
+        rows_payments.append('<tr><td colspan="3" class="empty">Нет оплат</td></tr>')
 
     agency_percent = escape(_fmt_money(project.get("agency_fee_percent", 0)).replace(",00", ""))
     expense_rows: list[str] = []
@@ -327,7 +357,7 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
                 f"""
                 <tr>
                   <td>{title}</td>
-                  <td class="num">{qty}</td>
+                  <td class="center">{qty}</td>
                   <td class="num">{unit_price}</td>
                   <td class="num strong">{row_sum}</td>
                 </tr>
@@ -338,7 +368,7 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
         if agency_amount > 0:
             expense_rows.append(
                 f"""
-                <tr class="sum-row">
+                <tr class="sum-row agency-row">
                   <td><strong>Агентские ({agency_percent}%)</strong></td>
                   <td></td>
                   <td></td>
@@ -350,24 +380,10 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
         expense_rows.append(
             f"""
             <tr class="sum-row">
-              <td><strong>Итого по группе</strong></td>
+              <td><strong>Итого</strong></td>
               <td></td>
               <td></td>
               <td class="num strong">{escape(_fmt_money(group.get("total_with_agency", 0.0)))}</td>
-            </tr>
-            """
-        )
-
-    common_agency_amount = _safe_num(totals.get("common_agency_amount"))
-    if common_agency_amount > 0:
-        expense_rows.append('<tr class="group-title-row"><td colspan="4"><strong>Общие агентские</strong></td></tr>')
-        expense_rows.append(
-            f"""
-            <tr class="sum-row">
-              <td><strong>Общие агентские ({agency_percent}%)</strong></td>
-              <td></td>
-              <td></td>
-              <td class="num strong">{escape(_fmt_money(common_agency_amount))}</td>
             </tr>
             """
         )
@@ -421,6 +437,10 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
       gap:8px;
       margin:0 0 8px;
     }}
+    .totals-strip-three {{
+      grid-template-columns:repeat(3,minmax(0,1fr));
+      margin-bottom:0;
+    }}
     .total {{
       border:1px solid var(--line);
       border-radius:8px;
@@ -434,6 +454,13 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
       grid-template-columns:2.2fr 1fr;
       gap:8px;
       align-items:start;
+    }}
+    .totals-layout {{
+      display:grid;
+      grid-template-columns:2.2fr 1fr;
+      gap:8px;
+      align-items:start;
+      margin-top:8px;
     }}
     .stack {{ display:grid; gap:8px; }}
     .panel {{ border:1px solid var(--line); border-radius:10px; background:#fff; overflow:hidden; }}
@@ -449,11 +476,15 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
     .empty {{ text-align:center; color:var(--muted); padding:9px; }}
     .group-title-row td {{ background:#000; color:#fff; font-weight:700; }}
     .sum-row td {{ background:#fafafa; }}
+    .agency-row td {{ border-top:10px solid #fff; }}
+    .group-title-row td {{ border-top:14px solid #fff; }}
+    tbody tr:first-child.group-title-row td {{ border-top-width:1px; }}
     .footer {{ color:var(--muted); font-size:10px; margin-top:6px; }}
     .actions {{ display:flex; gap:8px; margin-top:8px; }}
     .btn {{ border:1px solid var(--line); border-radius:7px; background:#fff; color:var(--text); padding:5px 8px; font:inherit; font-weight:600; cursor:pointer; }}
     @media (max-width:1100px) {{
       .layout {{ grid-template-columns:1fr; }}
+      .totals-layout {{ grid-template-columns:1fr; }}
       .meta-line, .totals-strip {{ grid-template-columns:repeat(2,minmax(0,1fr)); }}
     }}
     @media print {{
@@ -496,7 +527,7 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
 
     <div class="layout">
       <section class="panel">
-        <div class="panel-h">Расходы по группам</div>
+        <div class="panel-h">Расходы</div>
         <table>
           <thead>
             <tr>
@@ -518,10 +549,9 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
           <table>
             <thead>
               <tr>
-                <th style="width:24%">Дата оплаты</th>
-                <th style="width:24%">Сумма</th>
-                <th style="width:16%">Статус</th>
-                <th>Примечание</th>
+                <th style="width:48%">Дата оплаты</th>
+                <th style="width:32%">Сумма</th>
+                <th style="width:20%">Статус</th>
               </tr>
             </thead>
             <tbody>
@@ -532,10 +562,13 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
       </section>
     </div>
 
-    <div class="totals-strip" style="margin-top:8px">
-      <div class="total"><div class="k">Сумма (до УСН)</div><div class="v">{expenses_before_usn}</div></div>
-      <div class="total"><div class="k">УСН ({usn_rate_percent}%)</div><div class="v">{usn_amount}</div></div>
-      <div class="total"><div class="k">Сумма с УСН</div><div class="v">{expenses_with_usn}</div></div>
+    <div class="totals-layout">
+      <div class="totals-strip totals-strip-three">
+        <div class="total"><div class="k">Сумма (до УСН)</div><div class="v">{expenses_before_usn}</div></div>
+        <div class="total"><div class="k">УСН ({usn_rate_percent}%)</div><div class="v">{usn_amount}</div></div>
+        <div class="total"><div class="k">Сумма с УСН</div><div class="v">{expenses_with_usn}</div></div>
+      </div>
+      <div></div>
     </div>
 
     <div class="actions">
