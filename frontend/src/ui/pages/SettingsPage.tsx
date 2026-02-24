@@ -208,7 +208,7 @@ export default function SettingsPage({ asModal = false, onClose }: SettingsPageP
       <section className="settings-section-block">
         <div className="settings-section-title">Данные</div>
         <div className="row settings-actions-row">
-          <button className="btn" onClick={() => void exportRegistryExcel()} disabled={isExportingRegistry}>Выгзка базы</button>
+          <button className="btn" onClick={() => void exportRegistryExcel()} disabled={isExportingRegistry}>Выгрузка базы</button>
           <button className="btn" onClick={() => setIsBackupOpen(true)}>Бэкап</button>
         </div>
       </section>
@@ -217,7 +217,7 @@ export default function SettingsPage({ asModal = false, onClose }: SettingsPageP
 
   if (asModal) {
     return (
-      <div className="grid">
+      <div className="grid settings-modal-compact">
         <div className="row" style={{ justifyContent: "space-between" }}>
           <div className="h1">Настройки</div>
           <button className="btn icon-btn modal-close-btn" aria-label="Закрыть окно" onClick={onClose}>×</button>

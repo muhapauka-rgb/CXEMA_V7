@@ -1143,6 +1143,40 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   gap: 10px;
 }
 
+.backup-modal-compact {
+  font-size: 11px;
+}
+
+.backup-modal-compact .h1 {
+  font-size: 13px;
+}
+
+.backup-modal-compact .btn {
+  font-size: 11px;
+  min-height: 22px;
+  padding: 3px 7px;
+}
+
+.backup-modal-compact .input {
+  font-size: 10px;
+  min-height: 24px;
+  padding: 4px 7px;
+}
+
+.backup-modal-compact .settings-label {
+  font-size: 9px;
+}
+
+.backup-modal-compact .backup-section-title {
+  font-size: 11px;
+}
+
+.backup-modal-compact .backup-status,
+.backup-modal-compact .backup-meta,
+.backup-modal-compact .muted {
+  font-size: 10px;
+}
+
 .backup-section {
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -1247,10 +1281,11 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 
 .settings-modal-card {
   padding: 16px 18px;
+  font-size: 11px;
 }
 
 .settings-modal-card .h1 {
-  font-size: 34px;
+  font-size: 24px;
   font-weight: 700;
   letter-spacing: -0.015em;
 }
@@ -1267,7 +1302,7 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 }
 
 .settings-section-title {
-  font-size: 22px;
+  font-size: 16px;
   font-weight: 700;
   line-height: 1.2;
   color: var(--text);
@@ -1286,15 +1321,37 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 }
 
 .settings-inline-note {
-  font-size: 15px;
+  font-size: 11px;
   font-weight: 500;
   color: var(--muted);
 }
 
 .settings-status-ok,
 .settings-status-error {
-  font-size: 15px;
+  font-size: 11px;
   font-weight: 500;
+}
+
+.settings-modal-compact .h1 {
+  font-size: 13px;
+}
+
+.settings-modal-compact .muted {
+  font-size: 10px;
+}
+
+.settings-modal-compact .btn {
+  font-size: 11px;
+}
+
+.settings-modal-compact .input {
+  font-size: 11px;
+  min-height: 24px;
+  padding: 4px 7px;
+}
+
+.settings-modal-compact .settings-label {
+  font-size: 9px;
 }
 
 .settings-status-ok {

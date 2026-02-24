@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from html import escape
 from typing import Any, Optional, Set
 
@@ -117,9 +117,15 @@ def _estimate_payload(
     group_name_by_id = {int(g.id): g.name for g in groups}
     item_by_id = {int(it.id): it for it in items}
 
+    today = date.today()
+
     expense_rows: list[dict[str, Any]] = []
+    expense_rows_by_group: dict[int, list[dict[str, Any]]] = {int(g.id): [] for g in groups}
     group_totals: dict[int, float] = {int(g.id): 0.0 for g in groups}
+    group_totals_today: dict[int, float] = {int(g.id): 0.0 for g in groups}
+    group_last_date: dict[int, Optional[date]] = {int(g.id): None for g in groups}
     expenses_total = 0.0
+    expenses_today = 0.0
     for it in items:
         if not bool(getattr(it, "include_in_estimate", True)):
             continue
@@ -129,8 +135,16 @@ def _estimate_payload(
         base = _item_base_total(it)
         extra = _safe_num(it.extra_profit_amount) if bool(it.extra_profit_enabled) else 0.0
         row_total = base + extra - discount_amount
+        gid = int(it.group_id)
         expenses_total += row_total
-        group_totals[int(it.group_id)] = _safe_num(group_totals.get(int(it.group_id), 0.0)) + row_total
+        group_totals[gid] = _safe_num(group_totals.get(gid, 0.0)) + row_total
+        item_date = it.planned_pay_date if isinstance(it.planned_pay_date, date) else None
+        if item_date and item_date <= today:
+            expenses_today += row_total
+            group_totals_today[gid] = _safe_num(group_totals_today.get(gid, 0.0)) + row_total
+        last_dt = group_last_date.get(gid)
+        if item_date and (last_dt is None or item_date > last_dt):
+            group_last_date[gid] = item_date
 
         parent_title = ""
         is_subitem = False
@@ -140,51 +154,78 @@ def _estimate_payload(
                 parent_title = parent.title
                 is_subitem = True
 
-        expense_rows.append(
-            {
-                "id": int(it.id),
-                "group_id": int(it.group_id),
-                "group": group_name_by_id.get(int(it.group_id), ""),
-                "title": it.title,
-                "parent_title": parent_title,
-                "is_subitem": is_subitem,
-                "date": _fmt_date(it.planned_pay_date),
-                "qty": None if it.qty is None else _safe_num(it.qty),
-                "unit_price": None if it.unit_price_base is None else _safe_num(it.unit_price_base),
-                "sum": row_total,
-            }
-        )
+        row_payload = {
+            "id": int(it.id),
+            "group_id": gid,
+            "group": group_name_by_id.get(gid, ""),
+            "title": it.title,
+            "parent_title": parent_title,
+            "is_subitem": is_subitem,
+            "date": _fmt_date(it.planned_pay_date),
+            "qty": None if it.qty is None else _safe_num(it.qty),
+            "unit_price": None if it.unit_price_base is None else _safe_num(it.unit_price_base),
+            "sum": row_total,
+        }
+        expense_rows.append(row_payload)
+        expense_rows_by_group.setdefault(gid, []).append(row_payload)
 
     payments_rows: list[dict[str, Any]] = []
     payments_total = 0.0
+    payments_upcoming_total = 0.0
     for pay in plans:
         amount = _safe_num(pay.amount)
         payments_total += amount
+        pay_date = pay.pay_date if isinstance(pay.pay_date, date) else None
+        status = "План"
+        if pay_date and pay_date <= today:
+            status = "Факт"
+        if pay_date and pay_date > today:
+            payments_upcoming_total += amount
         payments_rows.append(
             {
                 "id": int(pay.id),
                 "pay_date": _fmt_date(pay.pay_date),
                 "amount": amount,
                 "note": pay.note or "",
+                "status": status,
             }
         )
 
     agency_percent = _safe_num(project.agency_fee_percent)
     selected_group_agencies = group_agency_ids or set()
     group_summaries: list[dict[str, Any]] = []
+    expense_groups: list[dict[str, Any]] = []
     group_agency_total = 0.0
+    group_agency_today_total = 0.0
     for g in groups:
         gid = int(g.id)
         base_total = _safe_num(group_totals.get(gid, 0.0))
         agency_enabled = gid in selected_group_agencies
         agency_amount = _percent_amount(base_total, agency_percent) if agency_enabled else 0.0
+        agency_today = 0.0
+        if agency_enabled:
+            last_dt = group_last_date.get(gid)
+            if last_dt and last_dt <= today:
+                agency_today = agency_amount
         group_agency_total += agency_amount
+        group_agency_today_total += agency_today
         if base_total == 0 and not agency_enabled:
             continue
-        group_summaries.append(
+        summary = {
+            "group_id": gid,
+            "group_name": g.name,
+            "base_total": base_total,
+            "agency_enabled": agency_enabled,
+            "agency_amount": agency_amount,
+            "total_with_agency": base_total + agency_amount,
+            "today_total": _safe_num(group_totals_today.get(gid, 0.0)) + agency_today,
+        }
+        group_summaries.append(summary)
+        expense_groups.append(
             {
                 "group_id": gid,
                 "group_name": g.name,
+                "rows": expense_rows_by_group.get(gid, []),
                 "base_total": base_total,
                 "agency_enabled": agency_enabled,
                 "agency_amount": agency_amount,
@@ -197,6 +238,12 @@ def _estimate_payload(
         if common_agency_enabled
         else 0.0
     )
+    common_agency_today = 0.0
+    if common_agency_enabled and plans:
+        pay_dates = [p.pay_date for p in plans if isinstance(p.pay_date, date)]
+        if pay_dates and max(pay_dates) <= today:
+            common_agency_today = common_agency_amount
+    expenses_today += group_agency_today_total + common_agency_today
     expenses_before_usn = expenses_total + group_agency_total + common_agency_amount
     _usn_mode, usn_rate = get_global_usn_settings(db)
     usn_amount = _percent_amount(expenses_before_usn, usn_rate)
@@ -209,14 +256,17 @@ def _estimate_payload(
             "organization": project.client_name or "",
             "email": project.client_email or "",
             "phone": project.client_phone or "",
+            "agency_fee_percent": _safe_num(project.agency_fee_percent),
             "project_price_total": _safe_num(project.project_price_total),
             "generated_at": datetime.utcnow().isoformat(),
         },
         "expenses": expense_rows,
+        "expense_groups": expense_groups,
         "group_summary": group_summaries,
         "payments_plan": payments_rows,
         "totals": {
             "expenses_total": expenses_total,
+            "expenses_today": expenses_today,
             "group_agency_total": group_agency_total,
             "common_agency_amount": common_agency_amount,
             "expenses_before_usn": expenses_before_usn,
@@ -224,6 +274,7 @@ def _estimate_payload(
             "usn_amount": usn_amount,
             "expenses_with_usn": expenses_with_usn,
             "payments_plan_total": payments_total,
+            "payments_upcoming_total": payments_upcoming_total,
             "balance_before_usn": payments_total - expenses_before_usn,
             "balance_with_usn": payments_total - expenses_with_usn,
         },
@@ -232,83 +283,151 @@ def _estimate_payload(
 
 def _render_estimate_html(payload: dict[str, Any]) -> str:
     project = payload["project"]
-    expenses = payload["expenses"]
+    expense_groups = payload.get("expense_groups", [])
     payments = payload["payments_plan"]
-    group_summary = payload.get("group_summary", [])
     totals = payload["totals"]
-
-    rows_expenses = []
-    for row in expenses:
-        title = escape(str(row["title"]))
-        if row["is_subitem"]:
-            title = f'<span class="sub">↳ {title}</span>'
-        group = escape(_fmt_plain(row["group"]))
-        date = escape(_fmt_plain(row["date"]))
-        qty = "" if row["qty"] is None else escape(_fmt_money(row["qty"]).replace(",00", ""))
-        unit_price = "" if row["unit_price"] is None else escape(_fmt_money(row["unit_price"]))
-        row_sum = escape(_fmt_money(row["sum"]))
-        rows_expenses.append(
-            f"""
-            <tr>
-              <td>{group}</td>
-              <td>{title}</td>
-              <td class="center">{date}</td>
-              <td class="num">{qty}</td>
-              <td class="num">{unit_price}</td>
-              <td class="num strong">{row_sum}</td>
-            </tr>
-            """
-        )
-
-    if not rows_expenses:
-        rows_expenses.append('<tr><td colspan="6" class="empty">Нет строк, отмеченных в смету</td></tr>')
 
     rows_payments = []
     for row in payments:
         date = escape(_fmt_plain(row["pay_date"]))
         amount = escape(_fmt_money(row["amount"]))
+        status = escape(_fmt_plain(row.get("status")))
         note = escape(_fmt_plain(row["note"]))
         rows_payments.append(
             f"""
             <tr>
               <td class="center">{date}</td>
               <td class="num strong">{amount}</td>
+              <td class="center">{status}</td>
               <td>{note}</td>
             </tr>
             """
         )
     if not rows_payments:
-        rows_payments.append('<tr><td colspan="3" class="empty">Нет плановых поступлений</td></tr>')
+        rows_payments.append('<tr><td colspan="4" class="empty">Нет оплат</td></tr>')
 
-    group_rows = []
-    for row in group_summary:
-        group_name = escape(_fmt_plain(row["group_name"]))
-        base_total = escape(_fmt_money(row["base_total"]))
-        agency = escape(_fmt_money(row["agency_amount"])) if _safe_num(row["agency_amount"]) != 0 else ""
-        total_with_agency = escape(_fmt_money(row["total_with_agency"]))
+    agency_percent = escape(_fmt_money(project.get("agency_fee_percent", 0)).replace(",00", ""))
+    group_panels: list[str] = []
+    for group in expense_groups:
+        group_rows: list[str] = []
+        rows = group.get("rows", [])
+        for row in rows:
+            title = escape(str(row["title"]))
+            if row["is_subitem"]:
+                title = f'<span class="sub">↳ {title}</span>'
+            date = escape(_fmt_plain(row["date"]))
+            qty = "" if row["qty"] is None else escape(_fmt_money(row["qty"]).replace(",00", ""))
+            unit_price = "" if row["unit_price"] is None else escape(_fmt_money(row["unit_price"]))
+            row_sum = escape(_fmt_money(row["sum"]))
+            group_rows.append(
+                f"""
+                <tr>
+                  <td>{title}</td>
+                  <td class="center">{date}</td>
+                  <td class="num">{qty}</td>
+                  <td class="num">{unit_price}</td>
+                  <td class="num strong">{row_sum}</td>
+                </tr>
+                """
+            )
+
+        if not group_rows:
+            group_rows.append('<tr><td colspan="5" class="empty">Нет строк, отмеченных в смету</td></tr>')
+
+        agency_amount = _safe_num(group.get("agency_amount"))
+        if agency_amount > 0:
+            group_rows.append(
+                f"""
+                <tr class="sum-row">
+                  <td><strong>Агентские ({agency_percent}%)</strong></td>
+                  <td class="center">авто</td>
+                  <td></td>
+                  <td></td>
+                  <td class="num strong">{escape(_fmt_money(agency_amount))}</td>
+                </tr>
+                """
+            )
+
         group_rows.append(
             f"""
-            <tr>
-              <td>{group_name}</td>
-              <td class="num">{base_total}</td>
-              <td class="num">{agency}</td>
-              <td class="num strong">{total_with_agency}</td>
+            <tr class="sum-row">
+              <td><strong>Итого по группе</strong></td>
+              <td></td>
+              <td></td>
+              <td></td>
+              <td class="num strong">{escape(_fmt_money(group.get("total_with_agency", 0.0)))}</td>
             </tr>
             """
         )
-    if _safe_num(totals.get("common_agency_amount")) > 0:
-        group_rows.append(
+
+        group_panels.append(
             f"""
-            <tr>
-              <td><strong>Общие агентские</strong></td>
-              <td class="num">—</td>
-              <td class="num">{escape(_fmt_money(totals["common_agency_amount"]))}</td>
-              <td class="num strong">{escape(_fmt_money(totals["common_agency_amount"]))}</td>
-            </tr>
+            <section class="panel group-panel">
+              <div class="panel-h">{escape(_fmt_plain(group.get("group_name")))}</div>
+              <table>
+                <thead>
+                  <tr>
+                    <th style="width:34%">Статья</th>
+                    <th style="width:16%">Дата</th>
+                    <th style="width:10%">Шт</th>
+                    <th style="width:20%">Цена за ед</th>
+                    <th style="width:20%">Сумма</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {''.join(group_rows)}
+                </tbody>
+              </table>
+            </section>
             """
         )
-    if not group_rows:
-        group_rows.append('<tr><td colspan="4" class="empty">Агентские по группам не включены</td></tr>')
+
+    common_agency_amount = _safe_num(totals.get("common_agency_amount"))
+    if common_agency_amount > 0:
+        group_panels.append(
+            f"""
+            <section class="panel group-panel">
+              <div class="panel-h">Общие агентские</div>
+              <table>
+                <thead>
+                  <tr>
+                    <th style="width:34%">Статья</th>
+                    <th style="width:16%">Дата</th>
+                    <th style="width:10%">Шт</th>
+                    <th style="width:20%">Цена за ед</th>
+                    <th style="width:20%">Сумма</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="sum-row">
+                    <td><strong>Общие агентские ({agency_percent}%)</strong></td>
+                    <td class="center">авто</td>
+                    <td></td>
+                    <td></td>
+                    <td class="num strong">{escape(_fmt_money(common_agency_amount))}</td>
+                  </tr>
+                  <tr class="sum-row">
+                    <td><strong>Итого</strong></td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                    <td class="num strong">{escape(_fmt_money(common_agency_amount))}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </section>
+            """
+        )
+
+    if not group_panels:
+        group_panels.append(
+            """
+            <section class="panel group-panel">
+              <div class="panel-h">Расходы по группам</div>
+              <div class="empty">Нет строк, отмеченных в смету</div>
+            </section>
+            """
+        )
 
     project_title = escape(_fmt_plain(project["title"]))
     organization = escape(_fmt_plain(project["organization"]))
@@ -316,14 +435,13 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
     phone = escape(_fmt_plain(project["phone"]))
     generated = escape(_fmt_plain(project["generated_at"]).replace("T", " ")[:19])
 
-    expenses_total = escape(_fmt_money(totals["expenses_total"]))
+    expenses_today = escape(_fmt_money(totals["expenses_today"]))
     expenses_before_usn = escape(_fmt_money(totals["expenses_before_usn"]))
     usn_rate_percent = escape(_fmt_money(totals["usn_rate_percent"]).replace(",00", ""))
     usn_amount = escape(_fmt_money(totals["usn_amount"]))
     expenses_with_usn = escape(_fmt_money(totals["expenses_with_usn"]))
     payments_total = escape(_fmt_money(totals["payments_plan_total"]))
-    balance_before_usn = escape(_fmt_money(totals["balance_before_usn"]))
-    balance_with_usn = escape(_fmt_money(totals["balance_with_usn"]))
+    payments_upcoming = escape(_fmt_money(totals["payments_upcoming_total"]))
     project_price = escape(_fmt_money(project["project_price_total"]))
 
     return f"""<!doctype html>
@@ -372,8 +490,10 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
       align-items:start;
     }}
     .stack {{ display:grid; gap:8px; }}
+    .groups-stack {{ display:grid; gap:8px; }}
     .panel {{ border:1px solid var(--line); border-radius:10px; background:#fff; overflow:hidden; }}
     .panel-h {{ background:var(--head); color:var(--headText); padding:7px 10px; font-size:13px; font-weight:700; }}
+    .group-panel .panel-h {{ font-size:12.5px; }}
     table {{ width:100%; border-collapse:collapse; table-layout:fixed; }}
     th, td {{ border:1px solid var(--line); padding:5px 6px; vertical-align:middle; }}
     th {{ background:#eef3f9; color:#33445f; font-size:11px; font-weight:700; text-align:center; line-height:1.15; }}
@@ -383,6 +503,7 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
     td.strong {{ font-weight:700; }}
     .sub {{ color:#293a56; }}
     .empty {{ text-align:center; color:var(--muted); padding:9px; }}
+    .sum-row td {{ background:#f8fbff; }}
     .footer {{ color:var(--muted); font-size:10px; margin-top:6px; }}
     .actions {{ display:flex; gap:8px; margin-top:8px; }}
     .btn {{ border:1px solid var(--line); border-radius:7px; background:#fff; color:var(--text); padding:5px 8px; font:inherit; font-weight:600; cursor:pointer; }}
@@ -423,39 +544,25 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
 
     <div class="totals-strip">
       <div class="total"><div class="k">Стоимость проекта</div><div class="v">{project_price}</div></div>
-      <div class="total"><div class="k">Расходы (строки)</div><div class="v">{expenses_total}</div></div>
+      <div class="total"><div class="k">Расходы на сегодня</div><div class="v">{expenses_today}</div></div>
+      <div class="total"><div class="k">Предстоящие оплаты</div><div class="v">{payments_upcoming}</div></div>
       <div class="total"><div class="k">План по оплатам</div><div class="v">{payments_total}</div></div>
-      <div class="total"><div class="k">Разница до УСН</div><div class="v">{balance_before_usn}</div></div>
     </div>
 
     <div class="layout">
-      <section class="panel">
-        <div class="panel-h">Расходы (в смету)</div>
-        <table>
-          <thead>
-            <tr>
-              <th style="width:13%">Группа</th>
-              <th style="width:31%">Статья</th>
-              <th style="width:13%">Дата</th>
-              <th style="width:8%">Шт</th>
-              <th style="width:13%">Цена за ед</th>
-              <th style="width:22%">Сумма</th>
-            </tr>
-          </thead>
-          <tbody>
-            {''.join(rows_expenses)}
-          </tbody>
-        </table>
+      <section class="groups-stack">
+        {''.join(group_panels)}
       </section>
 
-      <div class="stack">
+      <section class="stack">
         <section class="panel">
-          <div class="panel-h">План по доходам</div>
+          <div class="panel-h">План по оплатам</div>
           <table>
             <thead>
               <tr>
-                <th style="width:28%">Дата оплаты</th>
-                <th style="width:32%">Сумма</th>
+                <th style="width:24%">Дата оплаты</th>
+                <th style="width:24%">Сумма</th>
+                <th style="width:16%">Статус</th>
                 <th>Примечание</th>
               </tr>
             </thead>
@@ -464,31 +571,13 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
             </tbody>
           </table>
         </section>
-
-        <section class="panel">
-          <div class="panel-h">Свод по группам (с агентскими)</div>
-          <table>
-            <thead>
-              <tr>
-                <th>Группа</th>
-                <th style="width:26%">Сумма группы</th>
-                <th style="width:26%">Агентские</th>
-                <th style="width:28%">Сумма с агентскими</th>
-              </tr>
-            </thead>
-            <tbody>
-              {''.join(group_rows)}
-            </tbody>
-          </table>
-        </section>
-      </div>
+      </section>
     </div>
 
     <div class="totals-strip" style="margin-top:8px">
       <div class="total"><div class="k">Сумма (до УСН)</div><div class="v">{expenses_before_usn}</div></div>
       <div class="total"><div class="k">УСН ({usn_rate_percent}%)</div><div class="v">{usn_amount}</div></div>
       <div class="total"><div class="k">Сумма с УСН</div><div class="v">{expenses_with_usn}</div></div>
-      <div class="total"><div class="k">Разница с УСН</div><div class="v">{balance_with_usn}</div></div>
     </div>
 
     <div class="actions">
