@@ -281,7 +281,7 @@ def compute_project_financials(db: Session, project_id: int) -> dict:
         }
 
     project_total = float(project.project_price_total or 0.0)
-    agency_fee = _symmetric_percent_part(project_total, float(project.agency_fee_percent or 0.0))
+    agency_fee = _symmetric_percent_part(expenses_total, float(project.agency_fee_percent or 0.0))
     usn_mode, usn_rate = get_global_usn_settings(db)
 
     received_all = float(
@@ -296,9 +296,9 @@ def compute_project_financials(db: Session, project_id: int) -> dict:
 
     usn_base = received_all if usn_mode == "LEGAL" else (expenses_total + agency_fee)
     usn_tax = usn_amount_from_base(usn_base, usn_rate)
-    expenses_with_tax = expenses_total + usn_tax
+    expenses_with_tax = expenses_total + agency_fee + usn_tax
     in_pocket = agency_fee + extra_profit_total - discount_total
-    diff = project_total - (expenses_total + agency_fee + usn_tax)
+    diff = project_total - expenses_with_tax
 
     return {
         "project_id": project_id,

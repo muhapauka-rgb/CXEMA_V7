@@ -130,11 +130,13 @@ html[data-theme="light"] .brand-logo {
 
 .brand .v7 {
   color: #ffffff;
-  font-weight: 900;
+  font-family: "Roboto Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  font-weight: 500;
   font-size: 34px;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
   line-height: 1;
-  margin-left: -20px;
+  margin-left: -34px;
+  transform: none;
 }
 
 html[data-theme="light"] .brand .v7 {
@@ -1482,6 +1484,7 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 
   .brand .v7 {
     font-size: 24px;
+    margin-left: -26px;
   }
 
   .nav-add {

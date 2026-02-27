@@ -597,8 +597,8 @@ export default function ProjectPage() {
     [groups, items, groupAgencyEnabled, agencyPercent, itemMathById],
   )
   const commonAgencyAmount = useMemo(
-    () => (isCommonAgencyOpen ? symmetricPercentPart(projectPriceDisplayValue, agencyPercent) : 0),
-    [isCommonAgencyOpen, projectPriceDisplayValue, agencyPercent],
+    () => (isCommonAgencyOpen ? symmetricPercentPart(expensesDisplay, agencyPercent) : 0),
+    [isCommonAgencyOpen, expensesDisplay, agencyPercent],
   )
   const agencyTotalFromExpenses = groupAgencyTotal + commonAgencyAmount
   const usnMode = appSettings?.usn_mode || "OPERATIONAL"
@@ -607,9 +607,9 @@ export default function ProjectPage() {
     ? paymentsTotal
     : (expensesDisplay + agencyTotalFromExpenses)
   const usnAmount = usnBaseForProject > 0 ? (usnBaseForProject * usnRate) / 100 : 0
-  const expensesDisplayWithUsn = expensesDisplay + usnAmount
+  const expensesDisplayWithUsn = expensesDisplay + agencyTotalFromExpenses + usnAmount
   const inPocketDisplay = agencyTotalFromExpenses + extraProfitDisplay - discountDisplay
-  const diffDisplay = projectPriceDisplayValue - (expensesDisplay + agencyTotalFromExpenses + usnAmount)
+  const diffDisplay = projectPriceDisplayValue - expensesDisplayWithUsn
   const groupAgencyStorageKey = useMemo(
     () => `cxema-v7:project:${projectId}:group-agency`,
     [projectId],

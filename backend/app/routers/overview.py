@@ -82,7 +82,7 @@ def snapshot(at: date = Query(..., description="YYYY-MM-DD"), db: Session = Depe
         usn_paid = sum(float(v.get("tax", 0.0)) for v in pocket_monthly.values())
         usn_base = r if usn_mode == "LEGAL" else (spent + agency)
         usn_total = max(usn_paid, usn_amount_from_base(usn_base, usn_rate))
-        spent = float(spent) + float(usn_total)
+        spent = float(spent) + float(agency) + float(usn_total)
         in_pocket = agency + ep - discount_total
         balance = r - spent
 

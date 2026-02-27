@@ -266,7 +266,7 @@ def _estimate_payload(
         )
 
     common_agency_amount = (
-        _percent_amount(_safe_num(project.project_price_total), agency_percent)
+        _percent_amount(expenses_total, agency_percent)
         if common_agency_enabled
         else 0.0
     )
@@ -337,8 +337,9 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
         rows_payments.append('<tr><td colspan="3" class="empty">Нет оплат</td></tr>')
 
     agency_percent = escape(_fmt_money(project.get("agency_fee_percent", 0)).replace(",00", ""))
+    common_agency_amount = _safe_num(totals.get("common_agency_amount"))
     expense_rows: list[str] = []
-    for group in expense_groups:
+    for group_idx, group in enumerate(expense_groups):
         group_name = escape(_fmt_plain(group.get("group_name")))
         expense_rows.append(f'<tr class="group-title-row"><td colspan="4"><strong>{group_name}</strong></td></tr>')
 
@@ -387,23 +388,31 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
             </tr>
             """
         )
-        expense_rows.append('<tr class="group-gap"><td colspan="4"></td></tr>')
+        if group_idx < len(expense_groups) - 1:
+            expense_rows.append('<tr class="group-gap"><td colspan="4"></td></tr>')
+
+    if common_agency_amount > 0:
+        expense_rows.append(
+            f"""
+            <tr class="sum-row agency-row">
+              <td><strong>Агентские ({agency_percent}%)</strong></td>
+              <td></td>
+              <td></td>
+              <td class="num strong">{escape(_fmt_money(common_agency_amount))}</td>
+            </tr>
+            """
+        )
 
     if not expense_rows:
         expense_rows.append('<tr><td colspan="4" class="empty">Нет строк, отмеченных в смету</td></tr>')
 
     project_title = escape(_fmt_plain(project["title"]))
-    organization = escape(_fmt_plain(project["organization"]))
-    email = escape(_fmt_plain(project["email"]))
-    phone = escape(_fmt_plain(project["phone"]))
-    generated = escape(_fmt_plain(project["generated_at"]).replace("T", " ")[:19])
 
     expenses_today = escape(_fmt_money(totals["expenses_today"]))
     expenses_before_usn = escape(_fmt_money(totals["expenses_before_usn"]))
     usn_rate_percent = escape(_fmt_money(totals["usn_rate_percent"]).replace(",00", ""))
     usn_amount = escape(_fmt_money(totals["usn_amount"]))
     expenses_with_usn = escape(_fmt_money(totals["expenses_with_usn"]))
-    payments_total = escape(_fmt_money(totals["payments_plan_total"]))
     payments_upcoming = escape(_fmt_money(totals["payments_upcoming_total"]))
     project_price = escape(_fmt_money(project["project_price_total"]))
 
@@ -421,23 +430,13 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
     * {{ box-sizing:border-box; }}
     body {{ margin:0; background:var(--bg); color:var(--text); font:12.5px/1.25 "Roboto","Segoe UI",Arial,sans-serif; }}
     .page {{ max-width:1400px; margin:8px auto 12px; padding:0 10px; }}
-    .top {{ display:grid; grid-template-columns:1fr auto; align-items:end; gap:10px; margin-bottom:8px; }}
+    .top {{ margin-bottom:8px; }}
     .h1 {{ margin:0; font-size:24px; font-weight:800; letter-spacing:-0.01em; }}
-    .meta {{ color:var(--muted); font-size:11px; }}
-    .meta-line {{
-      display:grid;
-      grid-template-columns:repeat(4,minmax(0,1fr));
-      gap:8px;
-      margin:0 0 8px;
-      color:var(--muted);
-      font-size:11px;
-    }}
-    .meta-line strong {{ color:var(--text); font-weight:700; }}
     .totals-strip {{
       display:grid;
-      grid-template-columns:repeat(4,minmax(0,1fr));
+      grid-template-columns:repeat(3,minmax(0,1fr));
       gap:8px;
-      margin:0 0 8px;
+      margin:36px 0 39px;
     }}
     .totals-strip-three {{
       grid-template-columns:repeat(3,minmax(0,1fr));
@@ -448,9 +447,10 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
       border-radius:8px;
       padding:6px 8px;
       background:#fff;
+      font-family:"Roboto","Segoe UI",Arial,sans-serif !important;
     }}
-    .total .k {{ color:var(--muted); font-size:11px; margin-bottom:2px; }}
-    .total .v {{ font-size:19px; font-weight:800; }}
+    .total .k {{ color:var(--muted); font-size:11px; margin-bottom:2px; font-family:"Roboto","Segoe UI",Arial,sans-serif !important; }}
+    .total .v {{ font-size:19px; font-weight:800; font-family:"Roboto","Segoe UI",Arial,sans-serif !important; }}
     .layout {{
       display:grid;
       grid-template-columns:2.2fr 1fr;
@@ -462,13 +462,18 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
       grid-template-columns:2.2fr 1fr;
       gap:8px;
       align-items:start;
-      margin-top:8px;
+      margin-top:0;
     }}
     .stack {{ display:grid; gap:8px; }}
     .panel {{ border:1px solid var(--line); border-radius:10px; background:#fff; overflow:hidden; }}
-    .expenses-panel {{ border-left:0; border-right:0; border-bottom:0; border-radius:0; }}
+    .expenses-panel {{ width:94%; border-left:0; border-right:0; border-bottom:0; border-radius:0; }}
+    .payments-panel {{ border-radius:0; }}
     .panel-h {{ background:var(--head); color:var(--headText); padding:7px 10px; font-size:13px; font-weight:700; font-family:"Roboto","Segoe UI",Arial,sans-serif; }}
     table {{ width:100%; border-collapse:collapse; table-layout:fixed; font-family:"Roboto Mono","Consolas","Menlo","Monaco",monospace; }}
+    .expenses-table thead th:nth-child(1) {{ text-align:left; }}
+    .expenses-table thead th:nth-child(2) {{ text-align:center; }}
+    .expenses-table thead th:nth-child(3),
+    .expenses-table thead th:nth-child(4) {{ text-align:right; }}
     th, td {{ border:1px solid var(--line); padding:5px 6px; vertical-align:middle; }}
     th {{ background:#f0f0f0; color:#202020; font-size:11px; font-weight:700; text-align:center; line-height:1.15; }}
     td {{ background:#fff; }}
@@ -479,6 +484,15 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
     .empty {{ text-align:center; color:var(--muted); padding:9px; }}
     .group-title-row td {{ background:#000; color:#fff; font-weight:700; border-top:0 !important; }}
     .sum-row td {{ background:#fafafa; border-bottom:1px solid var(--line) !important; }}
+    .header-gap td {{
+      border:0 !important;
+      border-left:0 !important;
+      border-right:0 !important;
+      padding:0;
+      height:21px;
+      background:var(--bg);
+      line-height:0;
+    }}
     .group-gap td {{
       border:0 !important;
       padding:0;
@@ -486,25 +500,25 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
       background:var(--bg);
       line-height:0;
     }}
-    .footer {{ color:var(--muted); font-size:10px; margin-top:6px; }}
-    .actions {{ display:flex; gap:8px; margin-top:8px; }}
-    .btn {{ border:1px solid var(--line); border-radius:7px; background:#fff; color:var(--text); padding:5px 8px; font:inherit; font-weight:600; cursor:pointer; font-family:"Roboto","Segoe UI",Arial,sans-serif; }}
-    .top, .meta, .meta-line, .totals-strip, .total, .footer, .actions {{
+    .top, .totals-strip, .total {{
       font-family:"Roboto","Segoe UI",Arial,sans-serif;
+    }}
+    .totals-strip-three {{
+      width:94%;
     }}
     @media (max-width:1100px) {{
       .layout {{ grid-template-columns:1fr; }}
       .totals-layout {{ grid-template-columns:1fr; }}
-      .meta-line, .totals-strip {{ grid-template-columns:repeat(2,minmax(0,1fr)); }}
+      .totals-strip {{ grid-template-columns:repeat(2,minmax(0,1fr)); }}
+      .expenses-panel,
+      .totals-strip-three {{ width:100%; }}
     }}
     @media print {{
       @page {{ size: A4 landscape; margin: 8mm; }}
       body {{ background:#fff; }}
       .page {{ max-width:none; margin:0; padding:0; }}
-      .actions {{ display:none; }}
       .h1 {{ font-size:18px; }}
-      .meta {{ font-size:10px; }}
-      .meta-line, .totals-strip {{ gap:6px; margin-bottom:6px; }}
+      .totals-strip {{ gap:6px; margin-bottom:6px; }}
       .total {{ padding:4px 6px; }}
       .total .k {{ font-size:10px; }}
       .total .v {{ font-size:15px; }}
@@ -518,43 +532,35 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
   <div class="page">
     <div class="top">
       <h1 class="h1">Смета проекта: {project_title}</h1>
-      <div class="meta">Сформировано: {generated}</div>
-    </div>
-
-    <div class="meta-line">
-      <div>Организация: <strong>{organization}</strong></div>
-      <div>Email: <strong>{email}</strong></div>
-      <div>Телефон: <strong>{phone}</strong></div>
-      <div>Проект: <strong>#{project["id"]}</strong></div>
     </div>
 
     <div class="totals-strip">
       <div class="total"><div class="k">Стоимость проекта</div><div class="v">{project_price}</div></div>
       <div class="total"><div class="k">Расходы на сегодня</div><div class="v">{expenses_today}</div></div>
       <div class="total"><div class="k">Предстоящие оплаты</div><div class="v">{payments_upcoming}</div></div>
-      <div class="total"><div class="k">План по оплатам</div><div class="v">{payments_total}</div></div>
     </div>
 
     <div class="layout">
       <section class="panel expenses-panel">
         <div class="panel-h">Расходы</div>
-        <table>
+        <table class="expenses-table">
           <thead>
             <tr>
-              <th style="width:46%">Статья</th>
-              <th style="width:14%">Шт</th>
-              <th style="width:20%">Цена за ед</th>
-              <th style="width:20%">Сумма</th>
+              <th style="width:53%">Статья</th>
+              <th style="width:9%">Шт</th>
+              <th style="width:19%">Цена за ед</th>
+              <th style="width:19%">Сумма</th>
             </tr>
           </thead>
           <tbody>
+            <tr class="header-gap"><td colspan="4"></td></tr>
             {''.join(expense_rows)}
           </tbody>
         </table>
       </section>
 
       <section class="stack">
-        <section class="panel">
+        <section class="panel payments-panel">
           <div class="panel-h">План по оплатам</div>
           <table>
             <thead>
@@ -581,10 +587,6 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
       <div></div>
     </div>
 
-    <div class="actions">
-      <button class="btn" onclick="window.print()">Печать / PDF</button>
-    </div>
-    <div class="footer">Источник данных: CXEMA V7</div>
   </div>
 </body>
 </html>"""

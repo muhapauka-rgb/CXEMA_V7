@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Смета — вот так вот</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;800&family=Roboto+Mono:wght@400;500;700&display=swap');
+    :root {
+      --bg:#f4f4f4; --text:#111111; --muted:#555555; --line:#cfcfcf; --head:#000000; --headText:#ffffff;
+    }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font:12.5px/1.25 "Roboto","Segoe UI",Arial,sans-serif; }
+    .page { max-width:1400px; margin:8px auto 12px; padding:0 10px; }
+    .top { margin-bottom:8px; }
+    .h1 { margin:0; font-size:24px; font-weight:800; letter-spacing:-0.01em; }
+    .totals-strip {
+      display:grid;
+      grid-template-columns:repeat(3,minmax(0,1fr));
+      gap:8px;
+      margin:36px 0 39px;
+    }
+    .totals-strip-three {
+      grid-template-columns:repeat(3,minmax(0,1fr));
+      margin-bottom:0;
+    }
+    .total {
+      border:1px solid var(--line);
+      border-radius:8px;
+      padding:6px 8px;
+      background:#fff;
+      font-family:"Roboto","Segoe UI",Arial,sans-serif !important;
+    }
+    .total .k { color:var(--muted); font-size:11px; margin-bottom:2px; font-family:"Roboto","Segoe UI",Arial,sans-serif !important; }
+    .total .v { font-size:19px; font-weight:800; font-family:"Roboto","Segoe UI",Arial,sans-serif !important; }
+    .layout {
+      display:grid;
+      grid-template-columns:2.2fr 1fr;
+      gap:8px;
+      align-items:start;
+    }
+    .totals-layout {
+      display:grid;
+      grid-template-columns:2.2fr 1fr;
+      gap:8px;
+      align-items:start;
+      margin-top:8px;
+    }
+    .stack { display:grid; gap:8px; }
+    .panel { border:1px solid var(--line); border-radius:10px; background:#fff; overflow:hidden; }
+    .expenses-panel { border-left:0; border-right:0; border-bottom:0; border-radius:0; }
+    .payments-panel { border-radius:0; }
+    .panel-h { background:var(--head); color:var(--headText); padding:7px 10px; font-size:13px; font-weight:700; font-family:"Roboto","Segoe UI",Arial,sans-serif; }
+    table { width:100%; border-collapse:collapse; table-layout:fixed; font-family:"Roboto Mono","Consolas","Menlo","Monaco",monospace; }
+    .expenses-table thead th:nth-child(1) { text-align:left; }
+    .expenses-table thead th:nth-child(2) { text-align:center; }
+    .expenses-table thead th:nth-child(3),
+    .expenses-table thead th:nth-child(4) { text-align:right; }
+    th, td { border:1px solid var(--line); padding:5px 6px; vertical-align:middle; }
+    th { background:#f0f0f0; color:#202020; font-size:11px; font-weight:700; text-align:center; line-height:1.15; }
+    td { background:#fff; }
+    td.num { text-align:right; font-variant-numeric:tabular-nums; }
+    td.center { text-align:center; }
+    td.strong { font-weight:700; }
+    .sub { color:#303030; }
+    .empty { text-align:center; color:var(--muted); padding:9px; }
+    .group-title-row td { background:#000; color:#fff; font-weight:700; border-top:0 !important; }
+    .sum-row td { background:#fafafa; border-bottom:1px solid var(--line) !important; }
+    .header-gap td {
+      border:0 !important;
+      border-left:0 !important;
+      border-right:0 !important;
+      padding:0;
+      height:21px;
+      background:var(--bg);
+      line-height:0;
+    }
+    .group-gap td {
+      border:0 !important;
+      padding:0;
+      height:42px;
+      background:var(--bg);
+      line-height:0;
+    }
+    .top, .totals-strip, .total {
+      font-family:"Roboto","Segoe UI",Arial,sans-serif;
+    }
+    @media (max-width:1100px) {
+      .layout { grid-template-columns:1fr; }
+      .totals-layout { grid-template-columns:1fr; }
+      .totals-strip { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    }
+    @media print {
+      @page { size: A4 landscape; margin: 8mm; }
+      body { background:#fff; }
+      .page { max-width:none; margin:0; padding:0; }
+      .h1 { font-size:18px; }
+      .totals-strip { gap:6px; margin-bottom:6px; }
+      .total { padding:4px 6px; }
+      .total .k { font-size:10px; }
+      .total .v { font-size:15px; }
+      .panel-h { font-size:12px; padding:6px 8px; }
+      th, td { padding:3px 4px; font-size:10.5px; }
+      .panel { break-inside:avoid; page-break-inside:avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="top">
+      <h1 class="h1">Смета проекта: вот так вот</h1>
+    </div>
+
+    <div class="totals-strip">
+      <div class="total"><div class="k">Стоимость проекта</div><div class="v">32 000,00</div></div>
+      <div class="total"><div class="k">Расходы на сегодня</div><div class="v">21 000,00</div></div>
+      <div class="total"><div class="k">Предстоящие оплаты</div><div class="v">12 000,00</div></div>
+    </div>
+
+    <div class="layout">
+      <section class="panel expenses-panel">
+        <div class="panel-h">Расходы</div>
+        <table class="expenses-table">
+          <thead>
+            <tr>
+              <th style="width:46%">Статья</th>
+              <th style="width:14%">Шт</th>
+              <th style="width:20%">Цена за ед</th>
+              <th style="width:20%">Сумма</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="header-gap"><td colspan="4"></td></tr>
+            <tr class="group-title-row"><td colspan="4"><strong>Стройка</strong></td></tr>
+            <tr>
+              <td>все</td>
+              <td class="center">1</td>
+              <td class="num">11 000,00</td>
+              <td class="num strong">11 000,00</td>
+            </tr>
+            <tr class="sum-row">
+              <td><strong>Итого</strong></td>
+              <td></td>
+              <td></td>
+              <td class="num strong">11 000,00</td>
+            </tr>
+            <tr class="group-gap"><td colspan="4"></td></tr>
+
+            <tr class="group-title-row"><td colspan="4"><strong>Команда</strong></td></tr>
+            <tr>
+              <td>чел</td>
+              <td class="center">1</td>
+              <td class="num">10 000,00</td>
+              <td class="num strong">10 000,00</td>
+            </tr>
+            <tr class="sum-row">
+              <td><strong>Итого</strong></td>
+              <td></td>
+              <td></td>
+              <td class="num strong">10 000,00</td>
+            </tr>
+            <tr class="group-gap"><td colspan="4"></td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="stack">
+        <section class="panel payments-panel">
+          <div class="panel-h">План по оплатам</div>
+          <table>
+            <thead>
+              <tr>
+                <th style="width:48%">Дата оплаты</th>
+                <th style="width:32%">Сумма</th>
+                <th style="width:20%">Статус</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="center">24 апреля 2026</td>
+                <td class="num strong">12 000,00</td>
+                <td class="center">План</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+      </section>
+    </div>
+
+    <div class="totals-layout">
+      <div class="totals-strip totals-strip-three">
+        <div class="total"><div class="k">Сумма (до УСН)</div><div class="v">21 000,00</div></div>
+        <div class="total"><div class="k">УСН (6%)</div><div class="v">1 260,00</div></div>
+        <div class="total"><div class="k">Сумма с УСН</div><div class="v">22 260,00</div></div>
+      </div>
+      <div></div>
+    </div>
+  </div>
+</body>
+</html>
