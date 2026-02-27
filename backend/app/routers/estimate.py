@@ -434,9 +434,19 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
     .h1 {{ margin:0; font-size:24px; font-weight:800; letter-spacing:-0.01em; }}
     .totals-strip {{
       display:grid;
-      grid-template-columns:repeat(3,minmax(0,1fr));
+      grid-template-columns:2.2fr 1fr;
       gap:8px;
       margin:36px 0 39px;
+      align-items:start;
+    }}
+    .totals-strip-left {{
+      display:grid;
+      grid-template-columns:repeat(2,minmax(0,1fr));
+      gap:8px;
+      width:94%;
+    }}
+    .totals-strip-right {{
+      display:block;
     }}
     .totals-strip-three {{
       grid-template-columns:repeat(3,minmax(0,1fr));
@@ -509,7 +519,8 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
     @media (max-width:1100px) {{
       .layout {{ grid-template-columns:1fr; }}
       .totals-layout {{ grid-template-columns:1fr; }}
-      .totals-strip {{ grid-template-columns:repeat(2,minmax(0,1fr)); }}
+      .totals-strip {{ grid-template-columns:1fr; }}
+      .totals-strip-left {{ width:100%; }}
       .expenses-panel,
       .totals-strip-three {{ width:100%; }}
     }}
@@ -535,9 +546,13 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
     </div>
 
     <div class="totals-strip">
-      <div class="total"><div class="k">Стоимость проекта</div><div class="v">{project_price}</div></div>
-      <div class="total"><div class="k">Расходы на сегодня</div><div class="v">{expenses_today}</div></div>
-      <div class="total"><div class="k">Предстоящие оплаты</div><div class="v">{payments_upcoming}</div></div>
+      <div class="totals-strip-left">
+        <div class="total"><div class="k">Стоимость проекта</div><div class="v">{project_price}</div></div>
+        <div class="total"><div class="k">Расходы на сегодня</div><div class="v">{expenses_today}</div></div>
+      </div>
+      <div class="totals-strip-right">
+        <div class="total"><div class="k">Предстоящие оплаты</div><div class="v">{payments_upcoming}</div></div>
+      </div>
     </div>
 
     <div class="layout">
