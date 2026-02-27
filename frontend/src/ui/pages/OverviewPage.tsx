@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom"
-import { apiGet, apiPost } from "../api"
+import { apiDelete, apiGet, apiPost } from "../api"
 import { openNativePicker } from "../datePicker"
 
 type SnapshotProject = {
@@ -115,6 +115,8 @@ export default function OverviewPage() {
   const [snapshot, setSnapshot] = useState<OverviewSnapshot | null>(null)
   const [leftProjects, setLeftProjects] = useState<SnapshotProject[]>([])
   const [draggingProjectId, setDraggingProjectId] = useState<number | null>(null)
+  const [projectToDelete, setProjectToDelete] = useState<SnapshotProject | null>(null)
+  const [deletingProjectId, setDeletingProjectId] = useState<number | null>(null)
   const [projectsMeta, setProjectsMeta] = useState<ProjectMeta[]>([])
   const [months, setMonths] = useState<string[]>([monthKey(new Date())])
   const [selectedMonth, setSelectedMonth] = useState(monthKey(new Date()))
@@ -225,6 +227,21 @@ export default function OverviewPage() {
     } catch (e) {
       setError(String(e))
       setLeftProjects(snapshot?.projects || [])
+    }
+  }
+
+  async function deleteProjectConfirmed() {
+    if (!projectToDelete) return
+    try {
+      setError(null)
+      setDeletingProjectId(projectToDelete.project_id)
+      await apiDelete(`/api/projects/${projectToDelete.project_id}`)
+      setProjectToDelete(null)
+      await loadAll()
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setDeletingProjectId(null)
     }
   }
 
@@ -352,6 +369,23 @@ export default function OverviewPage() {
                     void persistProjectOrder(nextOrder)
                   }}
                 >
+                  <button
+                    type="button"
+                    className="project-delete-btn"
+                    aria-label={`Удалить проект ${p.title}`}
+                    title="Удалить проект"
+                    onMouseDown={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                    }}
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setProjectToDelete(p)
+                    }}
+                  >
+                    ×
+                  </button>
                   <div className="project-tile-title">{p.title}</div>
                   <div className="muted">{meta?.client_name || "—"}</div>
                   <div className="muted">Получено на сегодня: {toMoney(p.received_to_date)}</div>
@@ -487,6 +521,44 @@ export default function OverviewPage() {
             <button type="submit" className="btn" disabled={creating}>Сохранить</button>
           </div>
         </form>
+      </div>
+    )}
+    {projectToDelete && (
+      <div
+        className="modal-backdrop"
+        onClick={() => {
+          if (!deletingProjectId) setProjectToDelete(null)
+        }}
+      >
+        <div
+          className="panel project-settings-panel project-delete-modal"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="h1">Удалить проект?</div>
+          <div className="muted" style={{ marginTop: 8 }}>
+            {`Проект «${projectToDelete.title}» будет удален без возможности восстановления.`}
+          </div>
+          <div className="row" style={{ justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+            <button
+              type="button"
+              className="btn"
+              disabled={Boolean(deletingProjectId)}
+              onClick={() => setProjectToDelete(null)}
+            >
+              Отмена
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={Boolean(deletingProjectId)}
+              onClick={() => {
+                void deleteProjectConfirmed()
+              }}
+            >
+              Удалить
+            </button>
+          </div>
+        </div>
       </div>
     )}
     </>

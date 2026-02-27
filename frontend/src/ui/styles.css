@@ -711,6 +711,41 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   cursor: grabbing;
 }
 
+.project-delete-btn {
+  position: absolute;
+  left: 7px;
+  top: 7px;
+  min-width: 16px;
+  width: 16px;
+  min-height: 16px;
+  height: 16px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0;
+  opacity: 0;
+  pointer-events: none;
+  cursor: pointer;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.classic-project-tile:hover .project-delete-btn,
+.classic-project-tile:focus-within .project-delete-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.project-delete-btn:hover {
+  color: var(--text);
+}
+
+.project-delete-modal {
+  width: min(420px, calc(100vw - 56px));
+}
+
 .tab-row {
   gap: 8px;
 }
