@@ -13,6 +13,8 @@ data/mock_sheets/
 data/backups/
 data/google/token.json
 data/google/*.token.json
+data/google/client_secret.json
+data/google/client_secret_*.json
 data/google/client_secret*.json
 
 # Node
