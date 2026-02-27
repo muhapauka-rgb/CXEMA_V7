@@ -4,7 +4,7 @@ import OverviewPage from './pages/OverviewPage'
 import ProjectPage from './pages/ProjectPage'
 import SettingsPage from './pages/SettingsPage'
 import LifePage from './pages/LifePage'
-import { API_BASE, apiGet } from './api'
+import { apiGet } from './api'
 
 type ThemeMode = "dark" | "light"
 
@@ -59,16 +59,6 @@ function VisualSettingsIcon() {
   )
 }
 
-function ExportRegistryIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M7 10v7a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-7" />
-      <path d="M12 15V4" />
-      <path d="m8.8 7.2 3.2-3.2 3.2 3.2" />
-    </svg>
-  )
-}
-
 function CxemaWordmark() {
   return (
     <svg className="brand-logo" viewBox="24 0 288 70" aria-hidden="true">
@@ -107,7 +97,6 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [accentInput, setAccentInput] = useState(accent)
   const [isDiscountsOpen, setIsDiscountsOpen] = useState(false)
-  const [isExportingRegistry, setIsExportingRegistry] = useState(false)
   const [discountsAsOf, setDiscountsAsOf] = useState(() => new Date().toISOString().slice(0, 10))
   const [discountsData, setDiscountsData] = useState<DiscountSummary | null>(null)
   const [discountsLoading, setDiscountsLoading] = useState(false)
@@ -156,31 +145,6 @@ export default function App() {
     if (next) setAccent(next)
   }
 
-  async function exportRegistryExcel() {
-    try {
-      setIsExportingRegistry(true)
-      const res = await fetch(`${API_BASE}/api/exports/excel`)
-      if (!res.ok) throw new Error(await res.text())
-      const blob = await res.blob()
-      const contentDisposition = res.headers.get("Content-Disposition") || ""
-      const m = /filename=\"([^\"]+)\"/.exec(contentDisposition)
-      const filename = m?.[1] || `cxema-registry-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.xlsx`
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement("a")
-      a.href = url
-      a.download = filename
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      URL.revokeObjectURL(url)
-    } catch (e) {
-      const msg = String(e)
-      window.alert(`Не удалось выгрузить Excel: ${msg}`)
-    } finally {
-      setIsExportingRegistry(false)
-    }
-  }
-
   return (
     <>
       <div className={isVisualOpen || isDiscountsOpen || isSettingsOpen ? "page-content-muted" : ""}>
@@ -199,15 +163,6 @@ export default function App() {
             }}
           >
             Скидки
-          </button>
-          <button
-            className="btn icon-btn icon-stroke"
-            aria-label="Выгрузить сводную базу в Excel"
-            onClick={() => void exportRegistryExcel()}
-            disabled={isExportingRegistry}
-            title="Выгрузить базу в Excel"
-          >
-            <ExportRegistryIcon />
           </button>
           <button className="btn icon-btn icon-stroke" onClick={() => setIsVisualOpen(true)} aria-label="Визуализация">
             <VisualSettingsIcon />

@@ -346,7 +346,7 @@ export default function BackupPage({ asModal = false, onClose, embedded = false 
 
   if (asModal) {
     return (
-      <div className="grid">
+      <div className="grid backup-modal-compact">
         <div className="row" style={{ justifyContent: "space-between" }}>
           <div className="h1">Бэкап</div>
           <button className="btn icon-btn modal-close-btn" aria-label="Закрыть окно" onClick={onClose}>×</button>

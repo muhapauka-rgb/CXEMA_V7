@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
-import { apiGet, apiPatch } from "../api"
+import { API_BASE, apiGet, apiPatch } from "../api"
 import BackupPage from "./BackupPage"
 
 type GoogleAuthStatus = {
@@ -41,6 +41,7 @@ export default function SettingsPage({ asModal = false, onClose }: SettingsPageP
   const [usnRateRaw, setUsnRateRaw] = useState("6")
   const [savingTax, setSavingTax] = useState(false)
   const [isBackupOpen, setIsBackupOpen] = useState(false)
+  const [isExportingRegistry, setIsExportingRegistry] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -117,12 +118,36 @@ export default function SettingsPage({ asModal = false, onClose }: SettingsPageP
     }
   }
 
-  const settingsBody = (
-    <>
-      <div className="h1">Google и налоги</div>
+  async function exportRegistryExcel() {
+    try {
+      setError(null)
+      setIsExportingRegistry(true)
+      const res = await fetch(`${API_BASE}/api/exports/excel`)
+      if (!res.ok) throw new Error(await res.text())
+      const blob = await res.blob()
+      const contentDisposition = res.headers.get("Content-Disposition") || ""
+      const m = /filename=\"([^\"]+)\"/.exec(contentDisposition)
+      const filename = m?.[1] || `cxema-registry-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.xlsx`
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      setMsg("База выгружена.")
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setIsExportingRegistry(false)
+    }
+  }
 
-      <div className="grid">
-        <div className="muted" style={{ fontWeight: 700, color: "var(--text)" }}>Google</div>
+  const settingsBody = (
+    <div className="settings-modal-layout">
+      <section className="settings-section-block">
+        <div className="settings-section-title">Google</div>
         <input
           className="input"
           placeholder="Google login (email)"
@@ -136,14 +161,19 @@ export default function SettingsPage({ asModal = false, onClose }: SettingsPageP
           value={googlePassword}
           onChange={(e) => setGooglePassword(e.target.value)}
         />
-        <div className="row">
+        <div className="row settings-actions-row">
           <button className="btn" onClick={saveGoogleCredentials}>Сохранить логин и пароль</button>
           <button className="btn" onClick={() => void refreshStatus()}>Проверить подключение</button>
           <button className="btn" onClick={() => void startOauth()}>Подключить Google (OAuth)</button>
         </div>
+        <div className="settings-inline-note">
+          Подключение Google: {status?.connected ? "да" : "нет"}
+        </div>
+      </section>
 
-        <div className="muted" style={{ marginTop: 8, fontWeight: 700, color: "var(--text)" }}>УСН</div>
-        <div className="row">
+      <section className="settings-section-block">
+        <div className="settings-section-title">Налоги</div>
+        <div className="row settings-actions-row">
           <button
             className={`btn ${usnMode === "LEGAL" ? "tab-active" : ""}`}
             onClick={() => setUsnMode("LEGAL")}
@@ -159,58 +189,52 @@ export default function SettingsPage({ asModal = false, onClose }: SettingsPageP
             Операционная
           </button>
         </div>
-        <input
-          className="input"
-          placeholder="Ставка УСН, %"
-          value={usnRateRaw}
-          onChange={(e) => setUsnRateRaw(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key !== "Enter") return
-            e.preventDefault()
-            void saveTaxSettings()
-          }}
-        />
-        <div className="row">
+        <div className="settings-tax-row">
+          <input
+            className="input"
+            placeholder="Ставка УСН, %"
+            value={usnRateRaw}
+            onChange={(e) => setUsnRateRaw(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter") return
+              e.preventDefault()
+              void saveTaxSettings()
+            }}
+          />
           <button className="btn" onClick={() => void saveTaxSettings()} disabled={savingTax}>Сохранить УСН</button>
         </div>
+      </section>
 
-        <div className="row" style={{ marginTop: 6 }}>
+      <section className="settings-section-block">
+        <div className="settings-section-title">Данные</div>
+        <div className="row settings-actions-row">
+          <button className="btn" onClick={() => void exportRegistryExcel()} disabled={isExportingRegistry}>Выгрузка базы</button>
           <button className="btn" onClick={() => setIsBackupOpen(true)}>Бэкап</button>
         </div>
-      </div>
-    </>
+      </section>
+    </div>
   )
 
   if (asModal) {
     return (
-      <div className="grid">
+      <div className="grid settings-modal-compact">
         <div className="row" style={{ justifyContent: "space-between" }}>
           <div className="h1">Настройки</div>
           <button className="btn icon-btn modal-close-btn" aria-label="Закрыть окно" onClick={onClose}>×</button>
         </div>
 
-        <div className="card">
+        <div className="card settings-modal-card">
           {settingsBody}
         </div>
 
-        <div className="card">
-          <div className="h1">Статус интеграции</div>
-          <div className="muted">mode: {status?.mode || "—"}</div>
-          <div className="muted">connected: {status?.connected ? "yes" : "no"}</div>
-          <div className="muted">client_secret_configured: {status?.client_secret_configured ? "yes" : "no"}</div>
-          <div className="muted">redirect_uri: {status?.redirect_uri || "—"}</div>
-          <div className="muted">token_file_path: {status?.token_file_path || "—"}</div>
-          {status?.last_error && <div className="muted" style={{ color: "#ff9a9a" }}>{status.last_error}</div>}
-        </div>
-
         {msg && (
-          <div className="card">
-            <div className="muted" style={{ color: "#7fffb6" }}>{msg}</div>
+          <div className="card settings-modal-card">
+            <div className="settings-status-ok">{msg}</div>
           </div>
         )}
         {error && (
-          <div className="card">
-            <div className="muted" style={{ color: "#ff9a9a" }}>{error}</div>
+          <div className="card settings-modal-card">
+            <div className="settings-status-error">{error}</div>
           </div>
         )}
 
@@ -234,28 +258,18 @@ export default function SettingsPage({ asModal = false, onClose }: SettingsPageP
         </div>
       </div>
 
-      <div className="card">
+      <div className="card settings-modal-card">
         {settingsBody}
       </div>
 
-      <div className="card">
-        <div className="h1">Статус интеграции</div>
-        <div className="muted">mode: {status?.mode || "—"}</div>
-        <div className="muted">connected: {status?.connected ? "yes" : "no"}</div>
-        <div className="muted">client_secret_configured: {status?.client_secret_configured ? "yes" : "no"}</div>
-        <div className="muted">redirect_uri: {status?.redirect_uri || "—"}</div>
-        <div className="muted">token_file_path: {status?.token_file_path || "—"}</div>
-        {status?.last_error && <div className="muted" style={{ color: "#ff9a9a" }}>{status.last_error}</div>}
-      </div>
-
       {msg && (
-        <div className="card">
-          <div className="muted" style={{ color: "#7fffb6" }}>{msg}</div>
+        <div className="card settings-modal-card">
+          <div className="settings-status-ok">{msg}</div>
         </div>
       )}
       {error && (
-        <div className="card">
-          <div className="muted" style={{ color: "#ff9a9a" }}>{error}</div>
+        <div className="card settings-modal-card">
+          <div className="settings-status-error">{error}</div>
         </div>
       )}
 

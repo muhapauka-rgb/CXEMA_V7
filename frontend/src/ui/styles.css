@@ -130,11 +130,13 @@ html[data-theme="light"] .brand-logo {
 
 .brand .v7 {
   color: #ffffff;
-  font-weight: 900;
+  font-family: "Roboto Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  font-weight: 500;
   font-size: 34px;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
   line-height: 1;
-  margin-left: -20px;
+  margin-left: -34px;
+  transform: none;
 }
 
 html[data-theme="light"] .brand .v7 {
@@ -1143,6 +1145,40 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   gap: 10px;
 }
 
+.backup-modal-compact {
+  font-size: 11px;
+}
+
+.backup-modal-compact .h1 {
+  font-size: 13px;
+}
+
+.backup-modal-compact .btn {
+  font-size: 11px;
+  min-height: 22px;
+  padding: 3px 7px;
+}
+
+.backup-modal-compact .input {
+  font-size: 10px;
+  min-height: 24px;
+  padding: 4px 7px;
+}
+
+.backup-modal-compact .settings-label {
+  font-size: 9px;
+}
+
+.backup-modal-compact .backup-section-title {
+  font-size: 11px;
+}
+
+.backup-modal-compact .backup-status,
+.backup-modal-compact .backup-meta,
+.backup-modal-compact .muted {
+  font-size: 10px;
+}
+
 .backup-section {
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -1245,6 +1281,89 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   margin: 12px 0;
 }
 
+.settings-modal-card {
+  padding: 16px 18px;
+  font-size: 11px;
+}
+
+.settings-modal-card .h1 {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+
+.settings-modal-layout {
+  display: grid;
+  gap: 14px;
+}
+
+.settings-section-block {
+  display: grid;
+  gap: 10px;
+  padding-bottom: 2px;
+}
+
+.settings-section-title {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text);
+}
+
+.settings-actions-row {
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.settings-tax-row {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(180px, 220px) auto;
+  align-items: end;
+}
+
+.settings-inline-note {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.settings-status-ok,
+.settings-status-error {
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.settings-modal-compact .h1 {
+  font-size: 13px;
+}
+
+.settings-modal-compact .muted {
+  font-size: 10px;
+}
+
+.settings-modal-compact .btn {
+  font-size: 11px;
+}
+
+.settings-modal-compact .input {
+  font-size: 11px;
+  min-height: 24px;
+  padding: 4px 7px;
+}
+
+.settings-modal-compact .settings-label {
+  font-size: 9px;
+}
+
+.settings-status-ok {
+  color: var(--ok);
+}
+
+.settings-status-error {
+  color: var(--bad);
+}
+
 .settings-field {
   display: grid;
   gap: 6px;
@@ -1325,6 +1444,10 @@ html[data-theme="light"] .overview-table tbody td:last-child {
     grid-template-columns: 1fr;
   }
 
+  .settings-tax-row {
+    grid-template-columns: 1fr;
+  }
+
   .backup-actions-cell {
     align-items: center;
   }
@@ -1361,6 +1484,7 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 
   .brand .v7 {
     font-size: 24px;
+    margin-left: -26px;
   }
 
   .nav-add {
