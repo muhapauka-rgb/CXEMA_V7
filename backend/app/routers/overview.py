@@ -46,7 +46,7 @@ def month_range(db: Session = Depends(get_db)):
 
 @router.get("/snapshot", response_model=OverviewSnapshot)
 def snapshot(at: date = Query(..., description="YYYY-MM-DD"), db: Session = Depends(get_db)):
-    projects = db.execute(select(Project)).scalars().all()
+    projects = db.execute(select(Project).order_by(Project.sort_order.desc(), Project.id.desc())).scalars().all()
     usn_mode, usn_rate = get_global_usn_settings(db)
 
     active = []

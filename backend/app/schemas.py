@@ -42,6 +42,7 @@ class ProjectOut(BaseModel):
     expected_from_client_total: float
     agency_fee_percent: float
     agency_fee_include_in_estimate: bool
+    sort_order: int
     created_at: datetime
     updated_at: datetime
     closed_at: Optional[date]
@@ -52,6 +53,10 @@ class ProjectOut(BaseModel):
 class GroupCreate(BaseModel):
     name: str
     sort_order: int = 0
+
+
+class ProjectReorderIn(BaseModel):
+    project_ids: List[int]
 
 class GroupUpdate(BaseModel):
     name: Optional[str] = None

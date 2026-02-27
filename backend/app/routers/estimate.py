@@ -193,16 +193,16 @@ def _render_estimate_pdf(payload: dict[str, Any]) -> bytes:
     try:
         from reportlab.lib import colors
         from reportlab.lib.pagesizes import A4, landscape
-        from reportlab.lib.styles import ParagraphStyle
         from reportlab.lib.units import mm
         from reportlab.pdfbase import pdfmetrics
         from reportlab.pdfbase.ttfonts import TTFont
-        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+        from reportlab.pdfgen import canvas
     except Exception as exc:
         raise ValueError("PDF_LIBRARIES_NOT_INSTALLED") from exc
 
     font_regular = "Helvetica"
     font_bold = "Helvetica-Bold"
+    font_table = "Courier"
     font_candidates = [
         "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
         "/Library/Fonts/Arial Unicode.ttf",
@@ -213,6 +213,7 @@ def _render_estimate_pdf(payload: dict[str, Any]) -> bytes:
             pdfmetrics.registerFont(TTFont("CXEMASans-Bold", font_path))
             font_regular = "CXEMASans"
             font_bold = "CXEMASans-Bold"
+            font_table = "CXEMASans"
             break
         except Exception:
             continue
@@ -222,231 +223,321 @@ def _render_estimate_pdf(payload: dict[str, Any]) -> bytes:
     payments = payload.get("payments_plan", [])
     totals = payload["totals"]
 
+    line = colors.HexColor("#cfcfcf")
+    bg_header = colors.black
+    bg_muted = colors.HexColor("#f0f0f0")
+    bg_sum = colors.HexColor("#fafafa")
+
+    def row_h(base: float, k: float) -> float:
+        return max(base * k, 8.0)
+
+    n_payment_rows = max(1, len(payments))
+    n_group_gaps = max(0, len(expense_groups) - 1)
+    n_expense_rows = 0
+    for g in expense_groups:
+        n_expense_rows += 1  # group title
+        n_expense_rows += len(g.get("rows") or [])
+        if _safe_num(g.get("agency_amount")) > 0:
+            n_expense_rows += 1
+        n_expense_rows += 1  # group total
+    if _safe_num(totals.get("common_agency_amount")) > 0:
+        n_expense_rows += 1
+
+    page_w, page_h = landscape(A4)
+    margin = 8 * mm
+    content_h = page_h - 2 * margin
+
+    expenses_table_h = 22 + 22 + 16 + (n_expense_rows * 20) + (n_group_gaps * 42)
+    payments_table_h = 22 + 22 + (n_payment_rows * 20)
+    totals_block_h = (3 * 40) + (2 * 8)
+    required_h = 24 + 20 + 40 + 14 + expenses_table_h + 14 + totals_block_h + 14 + payments_table_h
+    k = min(1.0, content_h / max(required_h, 1))
+
+    h_title = row_h(24, k)
+    h_after_title = row_h(20, k)
+    h_card = row_h(40, k)
+    h_after_cards = row_h(14, k)
+    h_panel_h = row_h(22, k)
+    h_head = row_h(22, k)
+    h_header_gap = row_h(16, k)
+    h_row = row_h(20, k)
+    h_group_gap = row_h(42, k)
+    h_after_expenses = row_h(14, k)
+    h_total_card = row_h(40, k)
+    h_totals_gap = row_h(8, k)
+    h_after_totals = row_h(14, k)
+
+    # Base typography: keep one base size for layout,
+    # then lift only top summary cards (+2 for labels, +5 for values).
+    f_base = 11.0
+    f_title = f_base
+    f_meta = f_base
+    f_label = f_base
+    f_value = f_base
+    f_tbl_h = f_base
+    f_tbl = f_base
+    f_top_label = f_base + 2.0
+    f_top_value = f_base + 5.0
+
     buf = BytesIO()
-    doc = SimpleDocTemplate(
-        buf,
-        pagesize=landscape(A4),
-        leftMargin=8 * mm,
-        rightMargin=8 * mm,
-        topMargin=8 * mm,
-        bottomMargin=8 * mm,
-        title=f"Смета — {project.get('title', '')}",
-    )
+    c = canvas.Canvas(buf, pagesize=landscape(A4))
+    c.setTitle(f"Смета — {project.get('title', '')}")
+    c.setFillColor(colors.white)
+    c.rect(0, 0, page_w, page_h, stroke=0, fill=1)
 
-    title_style = ParagraphStyle(
-        "title",
-        fontName=font_bold,
-        fontSize=20,
-        leading=23,
-        textColor=colors.HexColor("#111111"),
-    )
-    meta_style = ParagraphStyle(
-        "meta",
-        fontName=font_regular,
-        fontSize=10,
-        leading=12,
-        alignment=2,
-        textColor=colors.HexColor("#555555"),
-    )
-    k_style = ParagraphStyle(
-        "k",
-        fontName=font_regular,
-        fontSize=9,
-        leading=11,
-        textColor=colors.HexColor("#555555"),
-    )
-    v_style = ParagraphStyle(
-        "v",
-        fontName=font_bold,
-        fontSize=16,
-        leading=18,
-        textColor=colors.HexColor("#111111"),
-    )
+    x0 = margin
+    y_top = page_h - margin
+    content_w = page_w - (2 * margin)
+    gap = row_h(8, k)
 
-    story: list[Any] = []
+    def rect_top(
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        fill_color: Any = None,
+        stroke_color: Any = line,
+        stroke_width: float = 0.8,
+    ) -> None:
+        if fill_color is not None:
+            c.setFillColor(fill_color)
+        else:
+            c.setFillColor(colors.white)
+        c.setStrokeColor(stroke_color)
+        c.setLineWidth(stroke_width)
+        c.rect(x, y - h, w, h, stroke=1, fill=1)
 
+    def draw_text_left(
+        x: float,
+        y: float,
+        h: float,
+        text: str,
+        font_name: str,
+        font_size: float,
+        color: Any = colors.black,
+        pad: float = 6.0,
+    ) -> None:
+        c.setFillColor(color)
+        c.setFont(font_name, font_size)
+        base = y - (h + font_size) / 2 + 2
+        c.drawString(x + pad, base, text)
+
+    def draw_text_center(
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        text: str,
+        font_name: str,
+        font_size: float,
+        color: Any = colors.black,
+    ) -> None:
+        c.setFillColor(color)
+        c.setFont(font_name, font_size)
+        base = y - (h + font_size) / 2 + 2
+        tw = c.stringWidth(text, font_name, font_size)
+        c.drawString(x + (w - tw) / 2, base, text)
+
+    def draw_text_right(
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        text: str,
+        font_name: str,
+        font_size: float,
+        color: Any = colors.black,
+        pad: float = 6.0,
+    ) -> None:
+        c.setFillColor(color)
+        c.setFont(font_name, font_size)
+        base = y - (h + font_size) / 2 + 2
+        c.drawRightString(x + w - pad, base, text)
+
+    project_title = _fmt_plain(project.get("title"))
     generated_at = _fmt_generated_at(project.get("generated_at"))
-    title_tbl = Table(
-        [
-            [
-                Paragraph(f"Смета проекта: {escape(str(project.get('title') or '—'))}", title_style),
-                Paragraph(f"Сформировано: {generated_at}", meta_style),
-            ]
-        ],
-        colWidths=[doc.width * 0.72, doc.width * 0.28],
-    )
-    title_tbl.setStyle(
-        TableStyle(
-            [
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("ALIGN", (0, 0), (0, 0), "LEFT"),
-                ("ALIGN", (1, 0), (1, 0), "RIGHT"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-                ("TOPPADDING", (0, 0), (-1, -1), 0),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-            ]
-        )
-    )
-    story.append(title_tbl)
-    story.append(Spacer(1, 6 * mm))
+    c.setFillColor(colors.black)
+    c.setFont(font_bold, f_title)
+    c.drawString(x0, y_top - f_title, project_title)
+    c.setFillColor(colors.HexColor("#555555"))
+    c.setFont(font_regular, f_meta)
+    c.drawRightString(x0 + content_w, y_top - f_meta, f"Сформировано: {generated_at}")
+    y = y_top - h_title - h_after_title
 
-    cards = [
+    card_w = (content_w - (2 * gap)) / 3.0
+    kpi = [
         ("Стоимость проекта", _fmt_money(project.get("project_price_total", 0.0))),
         ("Расходы на сегодня", _fmt_money(totals.get("expenses_today", 0.0))),
         ("Предстоящие оплаты", _fmt_money(totals.get("payments_upcoming_total", 0.0))),
     ]
-    cards_tbl = Table(
-        [[Paragraph(k, k_style), Paragraph(v, v_style)] for k, v in cards],
-        colWidths=[doc.width * 0.22, doc.width * 0.11],
-    )
-    cards_tbl.setStyle(
-        TableStyle(
-            [
-                ("GRID", (0, 0), (-1, -1), 0.8, colors.HexColor("#cfcfcf")),
-                ("SPAN", (0, 0), (0, 0)),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 8),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-                ("TOPPADDING", (0, 0), (-1, -1), 6),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-            ]
-        )
-    )
-    story.append(cards_tbl)
-    story.append(Spacer(1, 5 * mm))
+    for i, (label, value) in enumerate(kpi):
+        x = x0 + i * (card_w + gap)
+        rect_top(x, y, card_w, h_card, fill_color=colors.white, stroke_color=line)
+        c.setFillColor(colors.HexColor("#555555"))
+        c.setFont(font_regular, f_top_label)
+        c.drawString(x + 6, y - f_top_label - 6, label)
+        c.setFillColor(colors.black)
+        c.setFont(font_bold, f_top_value)
+        c.drawString(x + 6, y - h_card + 8, value)
+    y -= h_card + h_after_cards
 
-    expense_data: list[list[str]] = [["Статья", "Шт", "Цена за ед", "Сумма"]]
-    expense_style = [
-        ("FONTNAME", (0, 0), (-1, -1), font_regular),
-        ("FONTSIZE", (0, 0), (-1, -1), 10),
-        ("GRID", (0, 0), (-1, -1), 0.7, colors.HexColor("#cfcfcf")),
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f0f0f0")),
-        ("FONTNAME", (0, 0), (-1, 0), font_bold),
-        ("ALIGN", (0, 0), (0, 0), "LEFT"),
-        ("ALIGN", (1, 0), (1, 0), "CENTER"),
-        ("ALIGN", (2, 0), (3, 0), "RIGHT"),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-    ]
+    exp_x = x0
+    exp_w = content_w
+    exp_cols = [exp_w * 0.53, exp_w * 0.09, exp_w * 0.19, exp_w * 0.19]
+    rect_top(exp_x, y, exp_w, h_panel_h, fill_color=bg_header, stroke_color=bg_header)
+    draw_text_left(exp_x, y, h_panel_h, "Расходы", font_bold, f_tbl_h, colors.white, 8)
+    y -= h_panel_h
+
+    x = exp_x
+    headers = ["Статья", "Шт", "Цена за ед", "Сумма"]
+    for i, w in enumerate(exp_cols):
+        rect_top(x, y, w, h_head, fill_color=bg_muted, stroke_color=line)
+        if i == 0:
+            draw_text_left(x, y, h_head, headers[i], font_bold, f_tbl_h, colors.HexColor("#202020"), 6)
+        elif i == 1:
+            draw_text_center(x, y, w, h_head, headers[i], font_bold, f_tbl_h, colors.HexColor("#202020"))
+        else:
+            draw_text_right(x, y, w, h_head, headers[i], font_bold, f_tbl_h, colors.HexColor("#202020"), 6)
+        x += w
+    y -= h_head + h_header_gap
 
     agency_percent = _fmt_money(project.get("agency_fee_percent", 0)).replace(",00", "")
-    for group in expense_groups:
-        row_idx = len(expense_data)
-        expense_data.append([str(group.get("group_name") or "—"), "", "", ""])
-        expense_style.extend(
-            [
-                ("SPAN", (0, row_idx), (3, row_idx)),
-                ("BACKGROUND", (0, row_idx), (3, row_idx), colors.black),
-                ("TEXTCOLOR", (0, row_idx), (3, row_idx), colors.white),
-                ("FONTNAME", (0, row_idx), (3, row_idx), font_bold),
-                ("ALIGN", (0, row_idx), (3, row_idx), "LEFT"),
-            ]
-        )
+    for idx, group in enumerate(expense_groups):
+        rect_top(exp_x, y, exp_w, h_row, fill_color=bg_header, stroke_color=bg_header)
+        draw_text_left(exp_x, y, h_row, _fmt_plain(group.get("group_name")), font_bold, f_tbl, colors.white, 6)
+        y -= h_row
 
-        rows = group.get("rows") or []
-        for row in rows:
+        for row in group.get("rows") or []:
+            x = exp_x
             title = str(row.get("title") or "")
             if row.get("is_subitem"):
                 title = f"↳ {title}"
-            qty = "" if row.get("qty") is None else _fmt_money(row.get("qty")).replace(",00", "")
-            unit_price = "" if row.get("unit_price") is None else _fmt_money(row.get("unit_price"))
-            row_sum = _fmt_money(row.get("sum"))
-            expense_data.append([title, qty, unit_price, row_sum])
+            vals = [
+                title,
+                "" if row.get("qty") is None else _fmt_money(row.get("qty")).replace(",00", ""),
+                "" if row.get("unit_price") is None else _fmt_money(row.get("unit_price")),
+                _fmt_money(row.get("sum")),
+            ]
+            for i, w in enumerate(exp_cols):
+                rect_top(x, y, w, h_row, fill_color=colors.white, stroke_color=line)
+                if i == 0:
+                    draw_text_left(x, y, h_row, vals[i], font_table, f_tbl, colors.black, 6)
+                elif i == 1:
+                    draw_text_center(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black)
+                else:
+                    draw_text_right(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black, 6)
+                x += w
+            y -= h_row
 
         agency_amount = _safe_num(group.get("agency_amount"))
         if agency_amount > 0:
-            expense_data.append([f"Агентские ({agency_percent}%)", "", "", _fmt_money(agency_amount)])
+            x = exp_x
+            vals = [f"Агентские ({agency_percent}%)", "", "", _fmt_money(agency_amount)]
+            for i, w in enumerate(exp_cols):
+                rect_top(x, y, w, h_row, fill_color=bg_sum, stroke_color=line)
+                if i == 0:
+                    draw_text_left(x, y, h_row, vals[i], font_bold, f_tbl, colors.black, 6)
+                elif i == 1:
+                    draw_text_center(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black)
+                else:
+                    draw_text_right(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black, 6)
+                x += w
+            y -= h_row
 
-        total_idx = len(expense_data)
-        expense_data.append(["Итого", "", "", _fmt_money(group.get("total_with_agency", 0.0))])
-        expense_style.extend(
-            [
-                ("BACKGROUND", (0, total_idx), (3, total_idx), colors.HexColor("#fafafa")),
-                ("FONTNAME", (0, total_idx), (3, total_idx), font_bold),
-            ]
-        )
+        x = exp_x
+        vals = ["Итого", "", "", _fmt_money(group.get("total_with_agency", 0.0))]
+        for i, w in enumerate(exp_cols):
+            rect_top(x, y, w, h_row, fill_color=bg_sum, stroke_color=line)
+            if i == 0:
+                draw_text_left(x, y, h_row, vals[i], font_bold, f_tbl, colors.black, 6)
+            elif i == 1:
+                draw_text_center(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black)
+            else:
+                draw_text_right(x, y, w, h_row, vals[i], font_bold if i == 3 else font_table, f_tbl, colors.black, 6)
+            x += w
+        y -= h_row
 
-        gap_idx = len(expense_data)
-        expense_data.append(["", "", "", ""])
-        expense_style.extend(
-            [
-                ("LINEBELOW", (0, gap_idx), (3, gap_idx), 0, colors.white),
-                ("LINEABOVE", (0, gap_idx), (3, gap_idx), 0, colors.white),
-                ("BACKGROUND", (0, gap_idx), (3, gap_idx), colors.white),
-            ]
-        )
+        if idx < len(expense_groups) - 1:
+            y -= h_group_gap
 
     common_agency_amount = _safe_num(totals.get("common_agency_amount"))
     if common_agency_amount > 0:
-        expense_data.append([f"Агентские ({agency_percent}%)", "", "", _fmt_money(common_agency_amount)])
+        x = exp_x
+        vals = [f"Агентские ({agency_percent}%)", "", "", _fmt_money(common_agency_amount)]
+        for i, w in enumerate(exp_cols):
+            rect_top(x, y, w, h_row, fill_color=bg_sum, stroke_color=line)
+            if i == 0:
+                draw_text_left(x, y, h_row, vals[i], font_bold, f_tbl, colors.black, 6)
+            elif i == 1:
+                draw_text_center(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black)
+            else:
+                draw_text_right(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black, 6)
+            x += w
+        y -= h_row
 
-    exp_tbl = Table(expense_data, colWidths=[doc.width * 0.42, doc.width * 0.08, doc.width * 0.16, doc.width * 0.16])
-    exp_tbl.setStyle(TableStyle(expense_style + [
-        ("ALIGN", (1, 1), (1, -1), "CENTER"),
-        ("ALIGN", (2, 1), (3, -1), "RIGHT"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 6),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-        ("TOPPADDING", (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-    ]))
-    story.append(exp_tbl)
-    story.append(Spacer(1, 5 * mm))
+    y -= h_after_expenses
 
-    pay_data = [["Дата оплаты", "Сумма", "Статус"]]
-    for row in payments:
-        pay_data.append([_fmt_date_long(row.get("pay_date")), _fmt_money(row.get("amount")), _fmt_plain(row.get("status"))])
-    if len(pay_data) == 1:
-        pay_data.append(["Нет оплат", "", ""])
-    pay_tbl = Table(pay_data, colWidths=[doc.width * 0.25, doc.width * 0.13, doc.width * 0.1])
-    pay_tbl.setStyle(
-        TableStyle(
-            [
-                ("FONTNAME", (0, 0), (-1, -1), font_regular),
-                ("FONTSIZE", (0, 0), (-1, -1), 10),
-                ("GRID", (0, 0), (-1, -1), 0.7, colors.HexColor("#cfcfcf")),
-                ("BACKGROUND", (0, 0), (-1, 0), colors.black),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                ("FONTNAME", (0, 0), (-1, 0), font_bold),
-                ("ALIGN", (0, 0), (0, -1), "CENTER"),
-                ("ALIGN", (1, 0), (1, -1), "RIGHT"),
-                ("ALIGN", (2, 0), (2, -1), "CENTER"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 6),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-                ("TOPPADDING", (0, 0), (-1, -1), 5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-            ]
-        )
-    )
-    story.append(pay_tbl)
-    story.append(Spacer(1, 5 * mm))
-
-    usn_rate_percent = _fmt_money(totals.get("usn_rate_percent", 0.0)).replace(",00", "")
-    totals_data = [
-        ["Сумма (до УСН)", _fmt_money(totals.get("expenses_before_usn", 0.0))],
-        [f"УСН ({usn_rate_percent}%)", _fmt_money(totals.get("usn_amount", 0.0))],
-        ["Сумма с УСН", _fmt_money(totals.get("expenses_with_usn", 0.0))],
+    total_card_w = min(content_w * 0.34, 100 * mm)
+    total_x = x0 + content_w - total_card_w
+    totals_cards = [
+        ("Сумма (до УСН)", _fmt_money(totals.get("expenses_before_usn", 0.0))),
+        (f"УСН ({_fmt_money(totals.get('usn_rate_percent', 0.0)).replace(',00', '')}%)", _fmt_money(totals.get("usn_amount", 0.0))),
+        ("Сумма с УСН", _fmt_money(totals.get("expenses_with_usn", 0.0))),
     ]
-    totals_tbl = Table(totals_data, colWidths=[doc.width * 0.22, doc.width * 0.12])
-    totals_tbl.setStyle(
-        TableStyle(
-            [
-                ("GRID", (0, 0), (-1, -1), 0.7, colors.HexColor("#cfcfcf")),
-                ("FONTNAME", (0, 0), (-1, -1), font_regular),
-                ("FONTNAME", (0, 0), (0, -1), font_bold),
-                ("FONTNAME", (1, 0), (1, -1), font_bold),
-                ("FONTSIZE", (0, 0), (-1, -1), 11),
-                ("ALIGN", (0, 0), (0, -1), "LEFT"),
-                ("ALIGN", (1, 0), (1, -1), "RIGHT"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 6),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-                ("TOPPADDING", (0, 0), (-1, -1), 5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-            ]
-        )
-    )
-    story.append(totals_tbl)
+    for idx, (label, value) in enumerate(totals_cards):
+        rect_top(total_x, y, total_card_w, h_total_card, fill_color=colors.white, stroke_color=line)
+        c.setFillColor(colors.HexColor("#555555"))
+        c.setFont(font_regular, f_label)
+        c.drawString(total_x + 6, y - f_label - 6, label)
+        c.setFillColor(colors.black)
+        c.setFont(font_bold, f_value)
+        c.drawString(total_x + 6, y - h_total_card + 8, value)
+        y -= h_total_card
+        if idx < len(totals_cards) - 1:
+            y -= h_totals_gap
 
-    doc.build(story)
+    y -= h_after_totals
+
+    pay_x = exp_x
+    pay_w = exp_w
+    pay_cols = [pay_w * 0.48, pay_w * 0.32, pay_w * 0.20]
+    rect_top(pay_x, y, pay_w, h_panel_h, fill_color=bg_header, stroke_color=bg_header)
+    draw_text_left(pay_x, y, h_panel_h, "План по оплатам", font_bold, f_tbl_h, colors.white, 8)
+    y -= h_panel_h
+
+    x = pay_x
+    pay_headers = ["Дата оплаты", "Сумма", "Статус"]
+    for i, w in enumerate(pay_cols):
+        rect_top(x, y, w, h_head, fill_color=bg_muted, stroke_color=line)
+        if i == 0:
+            draw_text_center(x, y, w, h_head, pay_headers[i], font_bold, f_tbl_h, colors.HexColor("#202020"))
+        elif i == 1:
+            draw_text_right(x, y, w, h_head, pay_headers[i], font_bold, f_tbl_h, colors.HexColor("#202020"), 6)
+        else:
+            draw_text_center(x, y, w, h_head, pay_headers[i], font_bold, f_tbl_h, colors.HexColor("#202020"))
+        x += w
+    y -= h_head
+
+    payment_rows = payments or [{"pay_date": None, "amount": "", "status": "Нет оплат"}]
+    for row in payment_rows:
+        x = pay_x
+        vals = [
+            _fmt_date_long(row.get("pay_date")),
+            _fmt_money(row.get("amount")) if row.get("amount") not in {"", None} else "",
+            _fmt_plain(row.get("status")),
+        ]
+        for i, w in enumerate(pay_cols):
+            rect_top(x, y, w, h_row, fill_color=colors.white, stroke_color=line)
+            if i == 0:
+                draw_text_center(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black)
+            elif i == 1:
+                draw_text_right(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black, 6)
+            else:
+                draw_text_center(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black)
+            x += w
+        y -= h_row
+
+    c.save()
     return buf.getvalue()
 
 

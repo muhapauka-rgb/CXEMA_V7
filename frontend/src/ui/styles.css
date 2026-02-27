@@ -685,6 +685,7 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   display: block;
   background: transparent;
   box-shadow: none;
+  transition: transform 0.16s ease, border-color 0.16s ease;
 }
 
 .project-tile:nth-child(even) {
@@ -699,6 +700,15 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   font-size: 17px;
   font-weight: 800;
   margin-bottom: 4px;
+}
+
+.classic-project-tile {
+  text-align: right;
+  cursor: grab;
+}
+
+.classic-project-tile:active {
+  cursor: grabbing;
 }
 
 .tab-row {

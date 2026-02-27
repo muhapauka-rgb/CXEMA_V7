@@ -69,6 +69,7 @@ class Project(Base):
     expected_from_client_total: Mapped[float] = mapped_column(Float, default=0.0)  # Ждём всего
     agency_fee_percent: Mapped[float] = mapped_column(Float, default=10.0)
     agency_fee_include_in_estimate: Mapped[bool] = mapped_column(Boolean, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

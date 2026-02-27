@@ -4,7 +4,7 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import select, text
+from sqlalchemy import select, text, func, update
 
 from ..db import get_db, engine, Base
 from ..models import (
@@ -36,6 +36,7 @@ from ..schemas import (
     PaymentFactUpdate,
     PaymentFactOut,
     ProjectComputed,
+    ProjectReorderIn,
 )
 from ..utils import compute_project_financials, gen_stable_id
 
@@ -63,6 +64,9 @@ def _ensure_sqlite_columns() -> None:
             conn.execute(text("ALTER TABLE projects ADD COLUMN agency_fee_percent FLOAT NOT NULL DEFAULT 10.0"))
         if "agency_fee_include_in_estimate" not in project_columns:
             conn.execute(text("ALTER TABLE projects ADD COLUMN agency_fee_include_in_estimate BOOLEAN NOT NULL DEFAULT 1"))
+        if "sort_order" not in project_columns:
+            conn.execute(text("ALTER TABLE projects ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0"))
+        conn.execute(text("UPDATE projects SET sort_order = id WHERE sort_order IS NULL OR sort_order = 0"))
 
         columns = {row[1] for row in conn.execute(text("PRAGMA table_info(expense_items)"))}
         if "include_in_estimate" not in columns:
@@ -207,10 +211,40 @@ def _attach_item_discounts(db: Session, project_id: int, items: list[ExpenseItem
 
 @router.get("", response_model=list[ProjectOut])
 def list_projects(db: Session = Depends(get_db)):
-    return db.execute(select(Project).order_by(Project.id.desc())).scalars().all()
+    return db.execute(select(Project).order_by(Project.sort_order.desc(), Project.id.desc())).scalars().all()
+
+
+@router.post("/reorder")
+def reorder_projects(payload: ProjectReorderIn, db: Session = Depends(get_db)):
+    ids = [int(v) for v in payload.project_ids]
+    if not ids:
+        return {"updated": 0}
+    if len(set(ids)) != len(ids):
+        raise HTTPException(422, "PROJECT_REORDER_DUPLICATES")
+
+    all_ids = db.execute(
+        select(Project.id).order_by(Project.sort_order.desc(), Project.id.desc())
+    ).scalars().all()
+    all_ids_set = set(int(v) for v in all_ids)
+    if any(pid not in all_ids_set for pid in ids):
+        raise HTTPException(422, "PROJECT_REORDER_UNKNOWN_ID")
+
+    pinned = set(ids)
+    remainder = [int(pid) for pid in all_ids if int(pid) not in pinned]
+    ordered_ids = ids + remainder
+    total = len(ordered_ids)
+    for idx, project_id in enumerate(ordered_ids):
+        db.execute(
+            update(Project)
+            .where(Project.id == project_id)
+            .values(sort_order=total - idx)
+        )
+    db.commit()
+    return {"updated": total}
 
 @router.post("", response_model=ProjectOut)
 def create_project(payload: ProjectCreate, db: Session = Depends(get_db)):
+    max_sort_order = db.execute(select(func.coalesce(func.max(Project.sort_order), 0))).scalar_one()
     p = Project(
         title=payload.title,
         client_name=payload.client_name,
@@ -220,6 +254,7 @@ def create_project(payload: ProjectCreate, db: Session = Depends(get_db)):
         google_drive_folder=payload.google_drive_folder,
         agency_fee_percent=payload.agency_fee_percent,
         agency_fee_include_in_estimate=payload.agency_fee_include_in_estimate,
+        sort_order=int(max_sort_order) + 1,
         project_price_total=payload.project_price_total,
         expected_from_client_total=payload.expected_from_client_total,
         closed_at=payload.closed_at,

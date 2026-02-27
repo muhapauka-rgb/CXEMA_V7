@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Link, useSearchParams } from "react-router-dom"
+import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { apiGet, apiPost } from "../api"
 import { openNativePicker } from "../datePicker"
 
@@ -110,8 +110,11 @@ function snapshotAtFromMonth(selected: string): string {
 }
 
 export default function OverviewPage() {
+  const navigate = useNavigate()
   const [search, setSearch] = useSearchParams()
   const [snapshot, setSnapshot] = useState<OverviewSnapshot | null>(null)
+  const [leftProjects, setLeftProjects] = useState<SnapshotProject[]>([])
+  const [draggingProjectId, setDraggingProjectId] = useState<number | null>(null)
   const [projectsMeta, setProjectsMeta] = useState<ProjectMeta[]>([])
   const [months, setMonths] = useState<string[]>([monthKey(new Date())])
   const [selectedMonth, setSelectedMonth] = useState(monthKey(new Date()))
@@ -144,6 +147,7 @@ export default function OverviewPage() {
   async function loadSnapshot() {
     const snap = await apiGet<OverviewSnapshot>(`/api/overview/snapshot?at=${at}`)
     setSnapshot(snap)
+    setLeftProjects(snap.projects || [])
   }
 
   async function loadAll() {
@@ -164,7 +168,7 @@ export default function OverviewPage() {
     try {
       setError(null)
       setCreating(true)
-      await apiPost("/api/projects", {
+      const created = await apiPost<ProjectMeta>("/api/projects", {
         title,
         client_name: form.client_name.trim() || null,
         client_email: form.client_email.trim() || null,
@@ -178,7 +182,7 @@ export default function OverviewPage() {
         next.delete("create")
         return next
       })
-      await loadAll()
+      navigate(`/projects/${created.id}`)
     } catch (e) {
       setError(String(e))
     } finally {
@@ -196,6 +200,33 @@ export default function OverviewPage() {
     void loadSnapshot().catch((e) => setError(String(e)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [at])
+
+  function reorderProjects(
+    source: SnapshotProject[],
+    fromProjectId: number,
+    toProjectId: number,
+  ): SnapshotProject[] {
+    if (fromProjectId === toProjectId) return source
+    const fromIdx = source.findIndex((p) => p.project_id === fromProjectId)
+    const toIdx = source.findIndex((p) => p.project_id === toProjectId)
+    if (fromIdx < 0 || toIdx < 0) return source
+    const copy = [...source]
+    const [moved] = copy.splice(fromIdx, 1)
+    copy.splice(toIdx, 0, moved)
+    return copy
+  }
+
+  async function persistProjectOrder(nextOrder: SnapshotProject[]) {
+    try {
+      await apiPost("/api/projects/reorder", {
+        project_ids: nextOrder.map((p) => p.project_id),
+      })
+      setSnapshot((prev) => (prev ? { ...prev, projects: [...nextOrder] } : prev))
+    } catch (e) {
+      setError(String(e))
+      setLeftProjects(snapshot?.projects || [])
+    }
+  }
 
   useEffect(() => {
     if (!createOpen) return
@@ -293,10 +324,34 @@ export default function OverviewPage() {
       <div className="classic-layout">
         <div className="panel">
           <div className="grid">
-            {(snapshot?.projects || []).map((p) => {
+            {leftProjects.map((p) => {
               const meta = metaById.get(p.project_id)
               return (
-                <Link key={p.project_id} to={`/projects/${p.project_id}`} className="project-tile">
+                <Link
+                  key={p.project_id}
+                  to={`/projects/${p.project_id}`}
+                  className="project-tile classic-project-tile"
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.effectAllowed = "move"
+                    e.dataTransfer.setData("text/plain", String(p.project_id))
+                    setDraggingProjectId(p.project_id)
+                  }}
+                  onDragEnd={() => setDraggingProjectId(null)}
+                  onDragOver={(e) => {
+                    e.preventDefault()
+                    if (draggingProjectId === null) return
+                    setLeftProjects((prev) => reorderProjects(prev, draggingProjectId, p.project_id))
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    if (draggingProjectId === null) return
+                    const nextOrder = reorderProjects(leftProjects, draggingProjectId, p.project_id)
+                    setDraggingProjectId(null)
+                    setLeftProjects(nextOrder)
+                    void persistProjectOrder(nextOrder)
+                  }}
+                >
                   <div className="project-tile-title">{p.title}</div>
                   <div className="muted">{meta?.client_name || "—"}</div>
                   <div className="muted">Получено на сегодня: {toMoney(p.received_to_date)}</div>
@@ -304,7 +359,7 @@ export default function OverviewPage() {
                 </Link>
               )
             })}
-            {(snapshot?.projects || []).length === 0 && <div className="muted">На выбранный месяц активных проектов нет</div>}
+            {leftProjects.length === 0 && <div className="muted">На выбранный месяц активных проектов нет</div>}
           </div>
         </div>
 
