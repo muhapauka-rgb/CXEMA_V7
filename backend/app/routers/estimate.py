@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from html import escape
+from io import BytesIO
 import re
 from typing import Any, Optional, Set
 
@@ -78,6 +79,24 @@ def _fmt_date_long(value: Any) -> str:
     if not dt_obj:
         return "—"
     return f"{dt_obj.day} {months[dt_obj.month - 1]} {dt_obj.year}"
+
+
+def _fmt_generated_at(value: Any) -> str:
+    if value is None:
+        return "—"
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, date):
+        dt = datetime.combine(value, datetime.min.time())
+    else:
+        text = str(value).strip()
+        if not text:
+            return "—"
+        try:
+            dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except Exception:
+            return text
+    return dt.strftime("%d.%m.%Y %H:%M")
 
 
 def _item_base_total(item: ExpenseItem) -> float:
@@ -168,6 +187,267 @@ def _project_or_404(db: Session, project_id: int) -> Project:
     if not project:
         raise HTTPException(status_code=404, detail="PROJECT_NOT_FOUND")
     return project
+
+
+def _render_estimate_pdf(payload: dict[str, Any]) -> bytes:
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.lib.styles import ParagraphStyle
+        from reportlab.lib.units import mm
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    except Exception as exc:
+        raise ValueError("PDF_LIBRARIES_NOT_INSTALLED") from exc
+
+    font_regular = "Helvetica"
+    font_bold = "Helvetica-Bold"
+    font_candidates = [
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        "/Library/Fonts/Arial Unicode.ttf",
+    ]
+    for font_path in font_candidates:
+        try:
+            pdfmetrics.registerFont(TTFont("CXEMASans", font_path))
+            pdfmetrics.registerFont(TTFont("CXEMASans-Bold", font_path))
+            font_regular = "CXEMASans"
+            font_bold = "CXEMASans-Bold"
+            break
+        except Exception:
+            continue
+
+    project = payload["project"]
+    expense_groups = payload.get("expense_groups", [])
+    payments = payload.get("payments_plan", [])
+    totals = payload["totals"]
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=landscape(A4),
+        leftMargin=8 * mm,
+        rightMargin=8 * mm,
+        topMargin=8 * mm,
+        bottomMargin=8 * mm,
+        title=f"Смета — {project.get('title', '')}",
+    )
+
+    title_style = ParagraphStyle(
+        "title",
+        fontName=font_bold,
+        fontSize=20,
+        leading=23,
+        textColor=colors.HexColor("#111111"),
+    )
+    meta_style = ParagraphStyle(
+        "meta",
+        fontName=font_regular,
+        fontSize=10,
+        leading=12,
+        alignment=2,
+        textColor=colors.HexColor("#555555"),
+    )
+    k_style = ParagraphStyle(
+        "k",
+        fontName=font_regular,
+        fontSize=9,
+        leading=11,
+        textColor=colors.HexColor("#555555"),
+    )
+    v_style = ParagraphStyle(
+        "v",
+        fontName=font_bold,
+        fontSize=16,
+        leading=18,
+        textColor=colors.HexColor("#111111"),
+    )
+
+    story: list[Any] = []
+
+    generated_at = _fmt_generated_at(project.get("generated_at"))
+    title_tbl = Table(
+        [
+            [
+                Paragraph(f"Смета проекта: {escape(str(project.get('title') or '—'))}", title_style),
+                Paragraph(f"Сформировано: {generated_at}", meta_style),
+            ]
+        ],
+        colWidths=[doc.width * 0.72, doc.width * 0.28],
+    )
+    title_tbl.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ALIGN", (0, 0), (0, 0), "LEFT"),
+                ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ]
+        )
+    )
+    story.append(title_tbl)
+    story.append(Spacer(1, 6 * mm))
+
+    cards = [
+        ("Стоимость проекта", _fmt_money(project.get("project_price_total", 0.0))),
+        ("Расходы на сегодня", _fmt_money(totals.get("expenses_today", 0.0))),
+        ("Предстоящие оплаты", _fmt_money(totals.get("payments_upcoming_total", 0.0))),
+    ]
+    cards_tbl = Table(
+        [[Paragraph(k, k_style), Paragraph(v, v_style)] for k, v in cards],
+        colWidths=[doc.width * 0.22, doc.width * 0.11],
+    )
+    cards_tbl.setStyle(
+        TableStyle(
+            [
+                ("GRID", (0, 0), (-1, -1), 0.8, colors.HexColor("#cfcfcf")),
+                ("SPAN", (0, 0), (0, 0)),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ]
+        )
+    )
+    story.append(cards_tbl)
+    story.append(Spacer(1, 5 * mm))
+
+    expense_data: list[list[str]] = [["Статья", "Шт", "Цена за ед", "Сумма"]]
+    expense_style = [
+        ("FONTNAME", (0, 0), (-1, -1), font_regular),
+        ("FONTSIZE", (0, 0), (-1, -1), 10),
+        ("GRID", (0, 0), (-1, -1), 0.7, colors.HexColor("#cfcfcf")),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f0f0f0")),
+        ("FONTNAME", (0, 0), (-1, 0), font_bold),
+        ("ALIGN", (0, 0), (0, 0), "LEFT"),
+        ("ALIGN", (1, 0), (1, 0), "CENTER"),
+        ("ALIGN", (2, 0), (3, 0), "RIGHT"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]
+
+    agency_percent = _fmt_money(project.get("agency_fee_percent", 0)).replace(",00", "")
+    for group in expense_groups:
+        row_idx = len(expense_data)
+        expense_data.append([str(group.get("group_name") or "—"), "", "", ""])
+        expense_style.extend(
+            [
+                ("SPAN", (0, row_idx), (3, row_idx)),
+                ("BACKGROUND", (0, row_idx), (3, row_idx), colors.black),
+                ("TEXTCOLOR", (0, row_idx), (3, row_idx), colors.white),
+                ("FONTNAME", (0, row_idx), (3, row_idx), font_bold),
+                ("ALIGN", (0, row_idx), (3, row_idx), "LEFT"),
+            ]
+        )
+
+        rows = group.get("rows") or []
+        for row in rows:
+            title = str(row.get("title") or "")
+            if row.get("is_subitem"):
+                title = f"↳ {title}"
+            qty = "" if row.get("qty") is None else _fmt_money(row.get("qty")).replace(",00", "")
+            unit_price = "" if row.get("unit_price") is None else _fmt_money(row.get("unit_price"))
+            row_sum = _fmt_money(row.get("sum"))
+            expense_data.append([title, qty, unit_price, row_sum])
+
+        agency_amount = _safe_num(group.get("agency_amount"))
+        if agency_amount > 0:
+            expense_data.append([f"Агентские ({agency_percent}%)", "", "", _fmt_money(agency_amount)])
+
+        total_idx = len(expense_data)
+        expense_data.append(["Итого", "", "", _fmt_money(group.get("total_with_agency", 0.0))])
+        expense_style.extend(
+            [
+                ("BACKGROUND", (0, total_idx), (3, total_idx), colors.HexColor("#fafafa")),
+                ("FONTNAME", (0, total_idx), (3, total_idx), font_bold),
+            ]
+        )
+
+        gap_idx = len(expense_data)
+        expense_data.append(["", "", "", ""])
+        expense_style.extend(
+            [
+                ("LINEBELOW", (0, gap_idx), (3, gap_idx), 0, colors.white),
+                ("LINEABOVE", (0, gap_idx), (3, gap_idx), 0, colors.white),
+                ("BACKGROUND", (0, gap_idx), (3, gap_idx), colors.white),
+            ]
+        )
+
+    common_agency_amount = _safe_num(totals.get("common_agency_amount"))
+    if common_agency_amount > 0:
+        expense_data.append([f"Агентские ({agency_percent}%)", "", "", _fmt_money(common_agency_amount)])
+
+    exp_tbl = Table(expense_data, colWidths=[doc.width * 0.42, doc.width * 0.08, doc.width * 0.16, doc.width * 0.16])
+    exp_tbl.setStyle(TableStyle(expense_style + [
+        ("ALIGN", (1, 1), (1, -1), "CENTER"),
+        ("ALIGN", (2, 1), (3, -1), "RIGHT"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    story.append(exp_tbl)
+    story.append(Spacer(1, 5 * mm))
+
+    pay_data = [["Дата оплаты", "Сумма", "Статус"]]
+    for row in payments:
+        pay_data.append([_fmt_date_long(row.get("pay_date")), _fmt_money(row.get("amount")), _fmt_plain(row.get("status"))])
+    if len(pay_data) == 1:
+        pay_data.append(["Нет оплат", "", ""])
+    pay_tbl = Table(pay_data, colWidths=[doc.width * 0.25, doc.width * 0.13, doc.width * 0.1])
+    pay_tbl.setStyle(
+        TableStyle(
+            [
+                ("FONTNAME", (0, 0), (-1, -1), font_regular),
+                ("FONTSIZE", (0, 0), (-1, -1), 10),
+                ("GRID", (0, 0), (-1, -1), 0.7, colors.HexColor("#cfcfcf")),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.black),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), font_bold),
+                ("ALIGN", (0, 0), (0, -1), "CENTER"),
+                ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+                ("ALIGN", (2, 0), (2, -1), "CENTER"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ]
+        )
+    )
+    story.append(pay_tbl)
+    story.append(Spacer(1, 5 * mm))
+
+    usn_rate_percent = _fmt_money(totals.get("usn_rate_percent", 0.0)).replace(",00", "")
+    totals_data = [
+        ["Сумма (до УСН)", _fmt_money(totals.get("expenses_before_usn", 0.0))],
+        [f"УСН ({usn_rate_percent}%)", _fmt_money(totals.get("usn_amount", 0.0))],
+        ["Сумма с УСН", _fmt_money(totals.get("expenses_with_usn", 0.0))],
+    ]
+    totals_tbl = Table(totals_data, colWidths=[doc.width * 0.22, doc.width * 0.12])
+    totals_tbl.setStyle(
+        TableStyle(
+            [
+                ("GRID", (0, 0), (-1, -1), 0.7, colors.HexColor("#cfcfcf")),
+                ("FONTNAME", (0, 0), (-1, -1), font_regular),
+                ("FONTNAME", (0, 0), (0, -1), font_bold),
+                ("FONTNAME", (1, 0), (1, -1), font_bold),
+                ("FONTSIZE", (0, 0), (-1, -1), 11),
+                ("ALIGN", (0, 0), (0, -1), "LEFT"),
+                ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ]
+        )
+    )
+    story.append(totals_tbl)
+
+    doc.build(story)
+    return buf.getvalue()
 
 
 def _estimate_payload(
@@ -461,6 +741,7 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
         expense_rows.append('<tr><td colspan="4" class="empty">Нет строк, отмеченных в смету</td></tr>')
 
     project_title = escape(_fmt_plain(project["title"]))
+    generated_at = escape(_fmt_generated_at(project.get("generated_at")))
 
     expenses_today = escape(_fmt_money(totals["expenses_today"]))
     expenses_before_usn = escape(_fmt_money(totals["expenses_before_usn"]))
@@ -485,7 +766,14 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
     body {{ margin:0; background:var(--bg); color:var(--text); font:12.5px/1.25 "Roboto","Segoe UI",Arial,sans-serif; }}
     .page {{ max-width:1400px; margin:8px auto 12px; padding:0 10px; }}
     .top {{ margin-bottom:8px; }}
+    .top-row {{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:12px;
+    }}
     .h1 {{ margin:0; font-size:24px; font-weight:800; letter-spacing:-0.01em; }}
+    .generated-at {{ color:var(--muted); font-size:13px; font-weight:500; margin-top:4px; white-space:nowrap; }}
     .totals-strip {{
       display:grid;
       grid-template-columns:2.2fr 1fr;
@@ -596,7 +884,10 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
 <body>
   <div class="page">
     <div class="top">
-      <h1 class="h1">Смета проекта: {project_title}</h1>
+      <div class="top-row">
+        <h1 class="h1">Смета проекта: {project_title}</h1>
+        <div class="generated-at">Сформировано: {generated_at}</div>
+      </div>
     </div>
 
     <div class="totals-strip">
@@ -707,7 +998,7 @@ def upload_estimate_to_drive(
             group_agency_ids=_parse_group_ids(group_agency_ids),
             common_agency_enabled=bool(common_agency),
         )
-        html = _render_estimate_html(payload)
+        pdf_bytes = _render_estimate_pdf(payload)
 
         creds = _load_google_credentials(required=True)
         _, _, _, build = _import_google_deps()
@@ -719,16 +1010,15 @@ def upload_estimate_to_drive(
         drive = build("drive", "v3", credentials=creds, cache_discovery=False)
         folder_id = _resolve_drive_folder_id(drive, project)
 
-        now = datetime.now().strftime("%Y-%m-%d %H-%M")
-        file_name = f"Смета — {project.title} — {now}.html"
+        file_name = "Смета.pdf"
         metadata: dict[str, Any] = {
             "name": file_name,
-            "mimeType": "text/html",
+            "mimeType": "application/pdf",
         }
         if folder_id:
             metadata["parents"] = [folder_id]
 
-        media = MediaInMemoryUpload(html.encode("utf-8"), mimetype="text/html", resumable=False)
+        media = MediaInMemoryUpload(pdf_bytes, mimetype="application/pdf", resumable=False)
         created = drive.files().create(
             body=metadata,
             media_body=media,
@@ -750,6 +1040,8 @@ def upload_estimate_to_drive(
         status = 400
         if detail in {"GOOGLE_AUTH_REQUIRED", "GOOGLE_TOKEN_INVALID", "GOOGLE_TOKEN_REFRESH_FAILED"}:
             status = 401
+        if detail == "PDF_LIBRARIES_NOT_INSTALLED":
+            status = 500
         raise HTTPException(status_code=status, detail=detail) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
