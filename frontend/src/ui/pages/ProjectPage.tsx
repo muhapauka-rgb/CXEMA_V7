@@ -142,6 +142,15 @@ type GoogleAuthStart = {
   state: string
 }
 
+type EstimateDriveUpload = {
+  ok: boolean
+  file_id?: string | null
+  name?: string | null
+  web_view_link?: string | null
+  web_content_link?: string | null
+  folder_id?: string | null
+}
+
 type ItemFormState = {
   group_id: string
   title: string
@@ -469,6 +478,7 @@ export default function ProjectPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null)
+  const [driveUploadBusy, setDriveUploadBusy] = useState(false)
   const [projectPriceDraft, setProjectPriceDraft] = useState("0")
   const [savingProjectPrice, setSavingProjectPrice] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
@@ -733,6 +743,36 @@ export default function ProjectPage() {
     const qs = params.toString()
     const url = `${API_BASE}/api/projects/${projectId}/estimate/page${qs ? `?${qs}` : ""}`
     window.open(url, "_blank", "noopener,noreferrer")
+  }
+
+  async function uploadEstimateToDrive() {
+    if (!Number.isFinite(projectId)) return
+    try {
+      setError(null)
+      setDriveUploadBusy(true)
+      const params = new URLSearchParams()
+      const enabledGroupAgencyIds = groups
+        .filter((g) => !!groupAgencyEnabled[g.id])
+        .map((g) => String(g.id))
+      if (enabledGroupAgencyIds.length > 0) {
+        params.set("group_agency_ids", enabledGroupAgencyIds.join(","))
+      }
+      if (isCommonAgencyOpen) {
+        params.set("common_agency", "1")
+      }
+      const qs = params.toString()
+      const out = await apiPost<EstimateDriveUpload>(
+        `/api/projects/${projectId}/estimate/drive-upload${qs ? `?${qs}` : ""}`,
+        {},
+      )
+      if (out.web_view_link) {
+        window.open(out.web_view_link, "_blank", "noopener,noreferrer")
+      }
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setDriveUploadBusy(false)
+    }
   }
 
   async function saveProjectSettings() {
@@ -1868,6 +1908,13 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                 onClick={openEstimatePage}
               >
                 Смета
+              </button>
+              <button
+                className="btn"
+                disabled={driveUploadBusy}
+                onClick={() => void uploadEstimateToDrive()}
+              >
+                {driveUploadBusy ? "Отправка..." : "Смета в Drive"}
               </button>
               <button
                 className="btn"

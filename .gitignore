@@ -13,6 +13,7 @@ data/mock_sheets/
 data/backups/
 data/google/token.json
 data/google/*.token.json
+data/google/client_secret*.json
 
 # Node
 frontend/node_modules/

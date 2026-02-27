@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from html import escape
+import re
 from typing import Any, Optional, Set
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -11,9 +12,13 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import ClientBillingAdjustment, ClientPaymentsPlan, ExpenseGroup, ExpenseItem, ItemMode, Project
+from ..sheets_service import _import_google_deps, _load_google_credentials
 from ..utils import get_global_usn_settings
 
 router = APIRouter(prefix="/api/projects", tags=["estimate"])
+
+_DRIVE_FOLDER_ID_RE = re.compile(r"/folders/([a-zA-Z0-9_-]+)")
+_DRIVE_ID_QUERY_RE = re.compile(r"[?&]id=([a-zA-Z0-9_-]+)")
 
 
 def _safe_num(value: Any) -> float:
@@ -107,6 +112,55 @@ def _parse_group_ids(raw: Optional[str]) -> Set[int]:
         if value > 0:
             out.add(value)
     return out
+
+
+def _extract_drive_folder_id(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+
+    folder_match = _DRIVE_FOLDER_ID_RE.search(raw)
+    if folder_match:
+        return folder_match.group(1)
+
+    query_match = _DRIVE_ID_QUERY_RE.search(raw)
+    if query_match:
+        return query_match.group(1)
+
+    # If user provided folder id directly.
+    if re.fullmatch(r"[a-zA-Z0-9_-]{10,}", raw):
+        return raw
+    return None
+
+
+def _resolve_drive_folder_id(drive_api: Any, project: Project) -> Optional[str]:
+    direct = _extract_drive_folder_id(project.google_drive_folder) or _extract_drive_folder_id(project.google_drive_url)
+    if direct:
+        return direct
+
+    folder_name = (project.google_drive_folder or "").strip()
+    if not folder_name:
+        return None
+    escaped_name = folder_name.replace("'", "''")
+    try:
+        out = drive_api.files().list(
+            q=(
+                "mimeType='application/vnd.google-apps.folder' "
+                f"and name='{escaped_name}' and trashed=false"
+            ),
+            fields="files(id,name)",
+            pageSize=1,
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+        ).execute()
+    except Exception:
+        return None
+    files = out.get("files", [])
+    if not files:
+        return None
+    return str(files[0].get("id") or "") or None
 
 
 def _project_or_404(db: Session, project_id: int) -> Project:
@@ -636,3 +690,66 @@ def estimate_page(
         common_agency_enabled=bool(common_agency),
     )
     return HTMLResponse(content=_render_estimate_html(payload), media_type="text/html; charset=utf-8")
+
+
+@router.post("/{project_id}/estimate/drive-upload")
+def upload_estimate_to_drive(
+    project_id: int,
+    group_agency_ids: Optional[str] = Query(default=None),
+    common_agency: int = Query(default=0),
+    db: Session = Depends(get_db),
+):
+    project = _project_or_404(db, project_id)
+    try:
+        payload = _estimate_payload(
+            db=db,
+            project_id=project_id,
+            group_agency_ids=_parse_group_ids(group_agency_ids),
+            common_agency_enabled=bool(common_agency),
+        )
+        html = _render_estimate_html(payload)
+
+        creds = _load_google_credentials(required=True)
+        _, _, _, build = _import_google_deps()
+        try:
+            from googleapiclient.http import MediaInMemoryUpload
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail="GOOGLE_LIBRARIES_NOT_INSTALLED") from exc
+
+        drive = build("drive", "v3", credentials=creds, cache_discovery=False)
+        folder_id = _resolve_drive_folder_id(drive, project)
+
+        now = datetime.now().strftime("%Y-%m-%d %H-%M")
+        file_name = f"Смета — {project.title} — {now}.html"
+        metadata: dict[str, Any] = {
+            "name": file_name,
+            "mimeType": "text/html",
+        }
+        if folder_id:
+            metadata["parents"] = [folder_id]
+
+        media = MediaInMemoryUpload(html.encode("utf-8"), mimetype="text/html", resumable=False)
+        created = drive.files().create(
+            body=metadata,
+            media_body=media,
+            fields="id,name,webViewLink,webContentLink,parents",
+            supportsAllDrives=True,
+        ).execute()
+        return {
+            "ok": True,
+            "file_id": created.get("id"),
+            "name": created.get("name"),
+            "web_view_link": created.get("webViewLink"),
+            "web_content_link": created.get("webContentLink"),
+            "folder_id": folder_id,
+        }
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        detail = str(exc)
+        status = 400
+        if detail in {"GOOGLE_AUTH_REQUIRED", "GOOGLE_TOKEN_INVALID", "GOOGLE_TOKEN_REFRESH_FAILED"}:
+            status = 401
+        raise HTTPException(status_code=status, detail=detail) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
