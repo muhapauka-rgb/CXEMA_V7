@@ -64,7 +64,20 @@ const EMPTY_FORM: CreateProjectForm = {
   client_phone: "",
 }
 
-const MAX_CARD_IMAGE_BYTES = 5 * 1024 * 1024
+const IMAGE_EXTENSIONS = new Set([
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".gif",
+  ".bmp",
+  ".webp",
+  ".heic",
+  ".heif",
+  ".tif",
+  ".tiff",
+  ".avif",
+  ".svg",
+])
 
 function toMoney(v: number): string {
   return Number(v || 0).toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 0 })
@@ -123,6 +136,16 @@ function fileToDataUrl(file: File): Promise<string> {
   })
 }
 
+function isLikelyImageFile(file: File): boolean {
+  const mime = String(file.type || "").toLowerCase()
+  if (mime.startsWith("image/")) return true
+  const name = String(file.name || "").toLowerCase()
+  for (const ext of IMAGE_EXTENSIONS) {
+    if (name.endsWith(ext)) return true
+  }
+  return false
+}
+
 export default function OverviewPage() {
   const navigate = useNavigate()
   const [search, setSearch] = useSearchParams()
@@ -139,6 +162,7 @@ export default function OverviewPage() {
   const [error, setError] = useState<string | null>(null)
   const [projectSearch, setProjectSearch] = useState("")
   const monthPickerRef = useRef<HTMLInputElement | null>(null)
+  const cardFileInputRefs = useRef<Record<number, HTMLInputElement | null>>({})
 
   const createOpen = search.get("create") === "1"
   const at = useMemo(() => snapshotAtFromMonth(selectedMonth), [selectedMonth])
@@ -287,12 +311,8 @@ export default function OverviewPage() {
   }
 
   async function uploadProjectImage(project: ProjectMeta, file: File) {
-    if (!file.type.startsWith("image/")) {
+    if (!isLikelyImageFile(file)) {
       setError("Можно загрузить только изображение")
-      return
-    }
-    if (file.size > MAX_CARD_IMAGE_BYTES) {
-      setError("Картинка слишком большая (максимум 5 МБ)")
       return
     }
     try {
@@ -490,6 +510,38 @@ export default function OverviewPage() {
                   </button>
                   <div className="project-tile-content">
                     <div className="project-tile-thumb-wrap">
+                      <input
+                        ref={(el) => {
+                          cardFileInputRefs.current[p.id] = el
+                        }}
+                        className="project-tile-file-input"
+                        type="file"
+                        accept="image/*,.heic,.heif,.avif,.svg"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                        }}
+                        onChange={(e) => {
+                          const file = e.currentTarget.files?.[0]
+                          if (!file) return
+                          void uploadProjectImage(p, file)
+                          e.currentTarget.value = ""
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="project-tile-thumb-btn"
+                        onMouseDown={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                        }}
+                        onClick={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          cardFileInputRefs.current[p.id]?.click()
+                        }}
+                        title="Выбрать изображение"
+                        aria-label={`Выбрать изображение для ${p.title}`}
+                      >
                       {p.card_image_data ? (
                         <img
                           className="project-tile-thumb"
@@ -499,6 +551,7 @@ export default function OverviewPage() {
                       ) : (
                         <div className="project-tile-thumb project-tile-thumb-empty" />
                       )}
+                      </button>
                     </div>
                     <div className="project-tile-text">
                       <div className="project-tile-title">{p.title}</div>
