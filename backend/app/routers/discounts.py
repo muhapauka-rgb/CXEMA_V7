@@ -23,7 +23,11 @@ def discount_summary(
 ):
     if as_of is None:
         as_of = date.today()
-    projects = db.execute(select(Project)).scalars().all()
+    projects = db.execute(
+        select(Project)
+        .where(Project.is_paused.is_(False))
+        .order_by(Project.sort_order.desc(), Project.id.desc())
+    ).scalars().all()
     entries: list[DiscountEntryOut] = []
     by_org: defaultdict[str, float] = defaultdict(float)
 

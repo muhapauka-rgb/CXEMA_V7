@@ -111,7 +111,11 @@ def _life_for_month(
     # (planned payments/expenses inside that month must be considered).
     as_of = source_month_end
 
-    projects = db.execute(select(Project)).scalars().all()
+    projects = db.execute(
+        select(Project)
+        .where(Project.is_paused.is_(False))
+        .order_by(Project.sort_order.desc(), Project.id.desc())
+    ).scalars().all()
     project_by_id = {p.id: p for p in projects}
     usn_mode, usn_rate = get_global_usn_settings(db)
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom"
-import { apiDelete, apiGet, apiPost } from "../api"
+import { apiDelete, apiGet, apiPatch, apiPost } from "../api"
 import { openNativePicker } from "../datePicker"
 
 type SnapshotProject = {
@@ -44,6 +44,9 @@ type ProjectMeta = {
   client_name?: string | null
   client_email?: string | null
   client_phone?: string | null
+  card_image_data?: string | null
+  sort_order: number
+  is_paused: boolean
   created_at: string
 }
 
@@ -60,6 +63,8 @@ const EMPTY_FORM: CreateProjectForm = {
   client_email: "",
   client_phone: "",
 }
+
+const MAX_CARD_IMAGE_BYTES = 5 * 1024 * 1024
 
 function toMoney(v: number): string {
   return Number(v || 0).toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 0 })
@@ -109,13 +114,22 @@ function snapshotAtFromMonth(selected: string): string {
   return `${at.getFullYear()}-${z(at.getMonth() + 1)}-${z(at.getDate())}`
 }
 
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error("Не удалось прочитать файл"))
+    reader.onload = () => resolve(String(reader.result || ""))
+    reader.readAsDataURL(file)
+  })
+}
+
 export default function OverviewPage() {
   const navigate = useNavigate()
   const [search, setSearch] = useSearchParams()
   const [snapshot, setSnapshot] = useState<OverviewSnapshot | null>(null)
-  const [leftProjects, setLeftProjects] = useState<SnapshotProject[]>([])
+  const [leftProjects, setLeftProjects] = useState<ProjectMeta[]>([])
   const [draggingProjectId, setDraggingProjectId] = useState<number | null>(null)
-  const [projectToDelete, setProjectToDelete] = useState<SnapshotProject | null>(null)
+  const [projectToDelete, setProjectToDelete] = useState<ProjectMeta | null>(null)
   const [deletingProjectId, setDeletingProjectId] = useState<number | null>(null)
   const [projectsMeta, setProjectsMeta] = useState<ProjectMeta[]>([])
   const [months, setMonths] = useState<string[]>([monthKey(new Date())])
@@ -123,16 +137,33 @@ export default function OverviewPage() {
   const [form, setForm] = useState<CreateProjectForm>(EMPTY_FORM)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [projectSearch, setProjectSearch] = useState("")
   const monthPickerRef = useRef<HTMLInputElement | null>(null)
 
   const createOpen = search.get("create") === "1"
   const at = useMemo(() => snapshotAtFromMonth(selectedMonth), [selectedMonth])
   const selectedIdx = Math.max(0, months.indexOf(selectedMonth))
-  const metaById = useMemo(() => new Map(projectsMeta.map((p) => [p.id, p])), [projectsMeta])
+  const snapshotById = useMemo(
+    () => new Map((snapshot?.projects || []).map((p) => [p.project_id, p])),
+    [snapshot],
+  )
+  const filteredLeftProjects = useMemo(() => {
+    const q = projectSearch.trim().toLowerCase()
+    if (!q) return leftProjects
+    return leftProjects.filter((p) => p.title.toLowerCase().includes(q))
+  }, [leftProjects, projectSearch])
+  const filteredSnapshotProjects = useMemo(() => {
+    const q = projectSearch.trim().toLowerCase()
+    const base = snapshot?.projects || []
+    if (!q) return base
+    const ids = new Set(filteredLeftProjects.map((p) => p.id))
+    return base.filter((p) => ids.has(p.project_id) || p.title.toLowerCase().includes(q))
+  }, [snapshot, filteredLeftProjects, projectSearch])
 
   async function loadProjectsMeta() {
     const data = await apiGet<ProjectMeta[]>("/api/projects")
     setProjectsMeta(data)
+    setLeftProjects(data)
   }
 
   async function loadMonthRange() {
@@ -149,7 +180,6 @@ export default function OverviewPage() {
   async function loadSnapshot() {
     const snap = await apiGet<OverviewSnapshot>(`/api/overview/snapshot?at=${at}`)
     setSnapshot(snap)
-    setLeftProjects(snap.projects || [])
   }
 
   async function loadAll() {
@@ -203,14 +233,10 @@ export default function OverviewPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [at])
 
-  function reorderProjects(
-    source: SnapshotProject[],
-    fromProjectId: number,
-    toProjectId: number,
-  ): SnapshotProject[] {
+  function reorderProjects(source: ProjectMeta[], fromProjectId: number, toProjectId: number): ProjectMeta[] {
     if (fromProjectId === toProjectId) return source
-    const fromIdx = source.findIndex((p) => p.project_id === fromProjectId)
-    const toIdx = source.findIndex((p) => p.project_id === toProjectId)
+    const fromIdx = source.findIndex((p) => p.id === fromProjectId)
+    const toIdx = source.findIndex((p) => p.id === toProjectId)
     if (fromIdx < 0 || toIdx < 0) return source
     const copy = [...source]
     const [moved] = copy.splice(fromIdx, 1)
@@ -218,15 +244,15 @@ export default function OverviewPage() {
     return copy
   }
 
-  async function persistProjectOrder(nextOrder: SnapshotProject[]) {
+  async function persistProjectOrder(nextOrder: ProjectMeta[]) {
     try {
       await apiPost("/api/projects/reorder", {
-        project_ids: nextOrder.map((p) => p.project_id),
+        project_ids: nextOrder.map((p) => p.id),
       })
-      setSnapshot((prev) => (prev ? { ...prev, projects: [...nextOrder] } : prev))
+      setProjectsMeta(nextOrder)
     } catch (e) {
       setError(String(e))
-      setLeftProjects(snapshot?.projects || [])
+      setLeftProjects(projectsMeta)
     }
   }
 
@@ -234,14 +260,50 @@ export default function OverviewPage() {
     if (!projectToDelete) return
     try {
       setError(null)
-      setDeletingProjectId(projectToDelete.project_id)
-      await apiDelete(`/api/projects/${projectToDelete.project_id}`)
+      setDeletingProjectId(projectToDelete.id)
+      await apiDelete(`/api/projects/${projectToDelete.id}`)
       setProjectToDelete(null)
       await loadAll()
     } catch (e) {
       setError(String(e))
     } finally {
       setDeletingProjectId(null)
+    }
+  }
+
+  async function toggleProjectPause(project: ProjectMeta) {
+    try {
+      setError(null)
+      await apiPatch<ProjectMeta>(`/api/projects/${project.id}`, { is_paused: !project.is_paused })
+      await loadAll()
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
+  function upsertProjectMeta(updated: ProjectMeta) {
+    setLeftProjects((prev) => prev.map((p) => (p.id === updated.id ? { ...p, ...updated } : p)))
+    setProjectsMeta((prev) => prev.map((p) => (p.id === updated.id ? { ...p, ...updated } : p)))
+  }
+
+  async function uploadProjectImage(project: ProjectMeta, file: File) {
+    if (!file.type.startsWith("image/")) {
+      setError("Можно загрузить только изображение")
+      return
+    }
+    if (file.size > MAX_CARD_IMAGE_BYTES) {
+      setError("Картинка слишком большая (максимум 5 МБ)")
+      return
+    }
+    try {
+      setError(null)
+      const dataUrl = await fileToDataUrl(file)
+      const updated = await apiPatch<ProjectMeta>(`/api/projects/${project.id}`, {
+        card_image_data: dataUrl,
+      })
+      upsertProjectMeta(updated)
+    } catch (e) {
+      setError(String(e))
     }
   }
 
@@ -264,6 +326,19 @@ export default function OverviewPage() {
     <>
     <div className={`grid ${createOpen ? "page-content-muted" : ""}`}>
       <div className="sticky-stack">
+        <div className="overview-search-row">
+          <div className="overview-search-wrap">
+            <input
+              className="overview-search-input"
+              placeholder="Поиск проекта"
+              value={projectSearch}
+              onChange={(e) => setProjectSearch(e.target.value)}
+            />
+            <span className="overview-search-icon" aria-hidden="true">
+              🔍
+            </span>
+          </div>
+        </div>
         <div className="panel top-panel">
           <div className="timeline-panel">
             <div className="timeline-head">
@@ -341,29 +416,39 @@ export default function OverviewPage() {
       <div className="classic-layout">
         <div className="panel">
           <div className="grid">
-            {leftProjects.map((p) => {
-              const meta = metaById.get(p.project_id)
+            {filteredLeftProjects.map((p) => {
+              const metrics = snapshotById.get(p.id)
               return (
                 <Link
-                  key={p.project_id}
-                  to={`/projects/${p.project_id}`}
-                  className="project-tile classic-project-tile"
-                  draggable
+                  key={p.id}
+                  to={`/projects/${p.id}`}
+                  className={`project-tile classic-project-tile ${p.is_paused ? "paused-project-tile" : ""}`}
+                  draggable={!p.is_paused}
                   onDragStart={(e) => {
                     e.dataTransfer.effectAllowed = "move"
-                    e.dataTransfer.setData("text/plain", String(p.project_id))
-                    setDraggingProjectId(p.project_id)
+                    e.dataTransfer.setData("text/plain", String(p.id))
+                    setDraggingProjectId(p.id)
                   }}
                   onDragEnd={() => setDraggingProjectId(null)}
                   onDragOver={(e) => {
                     e.preventDefault()
+                    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                      e.dataTransfer.dropEffect = "copy"
+                      return
+                    }
                     if (draggingProjectId === null) return
-                    setLeftProjects((prev) => reorderProjects(prev, draggingProjectId, p.project_id))
+                    setLeftProjects((prev) => reorderProjects(prev, draggingProjectId, p.id))
                   }}
                   onDrop={(e) => {
                     e.preventDefault()
+                    e.stopPropagation()
+                    const droppedFile = e.dataTransfer.files?.[0]
+                    if (droppedFile) {
+                      void uploadProjectImage(p, droppedFile)
+                      return
+                    }
                     if (draggingProjectId === null) return
-                    const nextOrder = reorderProjects(leftProjects, draggingProjectId, p.project_id)
+                    const nextOrder = reorderProjects(leftProjects, draggingProjectId, p.id)
                     setDraggingProjectId(null)
                     setLeftProjects(nextOrder)
                     void persistProjectOrder(nextOrder)
@@ -386,14 +471,46 @@ export default function OverviewPage() {
                   >
                     ×
                   </button>
-                  <div className="project-tile-title">{p.title}</div>
-                  <div className="muted">{meta?.client_name || "—"}</div>
-                  <div className="muted">Получено на сегодня: {toMoney(p.received_to_date)}</div>
-                  <div className="muted">Потрачено по проекту: {toMoney(p.spent_to_date)}</div>
+                  <button
+                    type="button"
+                    className="project-pause-btn"
+                    aria-label={p.is_paused ? `Возобновить проект ${p.title}` : `Поставить на паузу проект ${p.title}`}
+                    title={p.is_paused ? "Возобновить" : "Пауза"}
+                    onMouseDown={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                    }}
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      void toggleProjectPause(p)
+                    }}
+                  >
+                    {p.is_paused ? "▶" : "‖"}
+                  </button>
+                  <div className="project-tile-content">
+                    <div className="project-tile-thumb-wrap">
+                      {p.card_image_data ? (
+                        <img
+                          className="project-tile-thumb"
+                          src={p.card_image_data}
+                          alt={`Миниатюра ${p.title}`}
+                        />
+                      ) : (
+                        <div className="project-tile-thumb project-tile-thumb-empty" />
+                      )}
+                    </div>
+                    <div className="project-tile-text">
+                      <div className="project-tile-title">{p.title}</div>
+                      <div className="muted">{p.client_name || "—"}</div>
+                      <div className="muted">Получено на сегодня: {toMoney(metrics?.received_to_date || 0)}</div>
+                      <div className="muted">Потрачено по проекту: {toMoney(metrics?.spent_to_date || 0)}</div>
+                    </div>
+                  </div>
                 </Link>
               )
             })}
-            {leftProjects.length === 0 && <div className="muted">На выбранный месяц активных проектов нет</div>}
+            {filteredLeftProjects.length === 0 && <div className="muted">Совпадений не найдено</div>}
           </div>
         </div>
 
@@ -421,7 +538,7 @@ export default function OverviewPage() {
                 </tr>
               </thead>
               <tbody>
-                {(snapshot?.projects || []).map((p) => (
+                {filteredSnapshotProjects.map((p) => (
                   <tr key={p.project_id}>
                     <td><Link to={`/projects/${p.project_id}`}>{p.title}</Link></td>
                     <td>{toMoney(p.received_to_date)}</td>
@@ -432,7 +549,7 @@ export default function OverviewPage() {
                     <td className={p.balance_to_date >= 0 ? "ok" : "bad"}>{toMoney(p.balance_to_date)}</td>
                   </tr>
                 ))}
-                {(snapshot?.projects || []).length === 0 && (
+                {filteredSnapshotProjects.length === 0 && (
                   <tr>
                     <td colSpan={7} className="muted">Нет данных</td>
                   </tr>

@@ -64,12 +64,14 @@ class Project(Base):
     client_phone: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     google_drive_url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     google_drive_folder: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    card_image_data: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     project_price_total: Mapped[float] = mapped_column(Float, default=0.0)  # Стоимость проекта
     expected_from_client_total: Mapped[float] = mapped_column(Float, default=0.0)  # Ждём всего
     agency_fee_percent: Mapped[float] = mapped_column(Float, default=10.0)
     agency_fee_include_in_estimate: Mapped[bool] = mapped_column(Boolean, default=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    is_paused: Mapped[bool] = mapped_column(Boolean, default=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

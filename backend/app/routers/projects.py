@@ -60,6 +60,8 @@ def _ensure_sqlite_columns() -> None:
             conn.execute(text("ALTER TABLE projects ADD COLUMN google_drive_url VARCHAR(1024)"))
         if "google_drive_folder" not in project_columns:
             conn.execute(text("ALTER TABLE projects ADD COLUMN google_drive_folder VARCHAR(255)"))
+        if "card_image_data" not in project_columns:
+            conn.execute(text("ALTER TABLE projects ADD COLUMN card_image_data TEXT"))
         if "agency_fee_percent" not in project_columns:
             conn.execute(text("ALTER TABLE projects ADD COLUMN agency_fee_percent FLOAT NOT NULL DEFAULT 10.0"))
         if "agency_fee_include_in_estimate" not in project_columns:
@@ -67,6 +69,8 @@ def _ensure_sqlite_columns() -> None:
         if "sort_order" not in project_columns:
             conn.execute(text("ALTER TABLE projects ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0"))
         conn.execute(text("UPDATE projects SET sort_order = id WHERE sort_order IS NULL OR sort_order = 0"))
+        if "is_paused" not in project_columns:
+            conn.execute(text("ALTER TABLE projects ADD COLUMN is_paused BOOLEAN NOT NULL DEFAULT 0"))
 
         columns = {row[1] for row in conn.execute(text("PRAGMA table_info(expense_items)"))}
         if "include_in_estimate" not in columns:
@@ -211,7 +215,9 @@ def _attach_item_discounts(db: Session, project_id: int, items: list[ExpenseItem
 
 @router.get("", response_model=list[ProjectOut])
 def list_projects(db: Session = Depends(get_db)):
-    return db.execute(select(Project).order_by(Project.sort_order.desc(), Project.id.desc())).scalars().all()
+    return db.execute(
+        select(Project).order_by(Project.is_paused.asc(), Project.sort_order.desc(), Project.id.desc())
+    ).scalars().all()
 
 
 @router.post("/reorder")
@@ -252,9 +258,11 @@ def create_project(payload: ProjectCreate, db: Session = Depends(get_db)):
         client_phone=payload.client_phone,
         google_drive_url=payload.google_drive_url,
         google_drive_folder=payload.google_drive_folder,
+        card_image_data=payload.card_image_data,
         agency_fee_percent=payload.agency_fee_percent,
         agency_fee_include_in_estimate=payload.agency_fee_include_in_estimate,
         sort_order=int(max_sort_order) + 1,
+        is_paused=False,
         project_price_total=payload.project_price_total,
         expected_from_client_total=payload.expected_from_client_total,
         closed_at=payload.closed_at,
@@ -278,8 +286,23 @@ def get_project(project_id: int, db: Session = Depends(get_db)):
 def update_project(project_id: int, payload: ProjectUpdate, db: Session = Depends(get_db)):
     p = _get_project_or_404(db, project_id)
 
-    for k, v in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    pause_update = "is_paused" in data and data["is_paused"] is not None
+    next_paused = bool(data.pop("is_paused")) if pause_update else bool(p.is_paused)
+
+    for k, v in data.items():
         setattr(p, k, v)
+
+    if pause_update and next_paused != bool(p.is_paused):
+        p.is_paused = next_paused
+        if not next_paused:
+            max_sort_order = db.execute(
+                select(func.coalesce(func.max(Project.sort_order), 0)).where(
+                    Project.is_paused.is_(False),
+                    Project.id != p.id,
+                )
+            ).scalar_one()
+            p.sort_order = int(max_sort_order) + 1
 
     db.commit()
     db.refresh(p)

@@ -677,6 +677,43 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   gap: 10px;
 }
 
+.overview-search-row {
+  display: flex;
+  justify-content: flex-end;
+  margin: 2px 0 6px;
+}
+
+.overview-search-wrap {
+  width: min(260px, 42vw);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 3px;
+}
+
+.overview-search-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+  padding: 0;
+  height: 22px;
+}
+
+.overview-search-input::placeholder {
+  color: var(--muted);
+}
+
+.overview-search-icon {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+}
+
 .project-tile {
   border: 1px solid var(--tile-a);
   border-radius: var(--radius);
@@ -711,10 +748,16 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   cursor: grabbing;
 }
 
+.paused-project-tile {
+  opacity: 0.58;
+  border-color: var(--line) !important;
+  cursor: default;
+}
+
 .project-delete-btn {
   position: absolute;
-  left: 7px;
-  top: 7px;
+  left: 8px;
+  top: 2px;
   min-width: 16px;
   width: 16px;
   min-height: 16px;
@@ -740,6 +783,74 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 
 .project-delete-btn:hover {
   color: var(--text);
+}
+
+.project-pause-btn {
+  position: absolute;
+  left: 30px;
+  top: 2px;
+  min-width: 16px;
+  width: 16px;
+  min-height: 16px;
+  height: 16px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  padding: 0;
+  opacity: 0;
+  pointer-events: none;
+  cursor: pointer;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.classic-project-tile:hover .project-pause-btn,
+.classic-project-tile:focus-within .project-pause-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.project-pause-btn:hover {
+  color: var(--text);
+}
+
+.project-tile-content {
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.project-tile-thumb-wrap {
+  padding-top: 18px;
+}
+
+.project-tile-thumb {
+  width: 100px;
+  height: 100px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  object-fit: cover;
+  display: block;
+  background: transparent;
+}
+
+.project-tile-thumb-empty {
+  background: transparent;
+}
+
+.project-tile-text {
+  min-width: 0;
+  text-align: right;
+}
+
+.project-tile-text .muted {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .project-delete-modal {
@@ -1557,6 +1668,21 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 
   .project-tile-title {
     font-size: 14px;
+  }
+
+  .project-tile-content {
+    grid-template-columns: 78px minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .project-tile-thumb-wrap {
+    padding-top: 16px;
+  }
+
+  .project-tile-thumb {
+    width: 72px;
+    height: 72px;
+    border-radius: 12px;
   }
 
   .h1 {
