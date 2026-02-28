@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
+import type { DragEvent as ReactDragEvent } from "react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { apiDelete, apiGet, apiPatch, apiPost } from "../api"
 import { openNativePicker } from "../datePicker"
@@ -144,6 +145,22 @@ function isLikelyImageFile(file: File): boolean {
     if (name.endsWith(ext)) return true
   }
   return false
+}
+
+function getDroppedFile(e: ReactDragEvent): File | null {
+  if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+    return e.dataTransfer.files[0]
+  }
+  const items = e.dataTransfer.items
+  if (!items || items.length === 0) return null
+  for (let i = 0; i < items.length; i += 1) {
+    const it = items[i]
+    if (it.kind === "file") {
+      const file = it.getAsFile()
+      if (file) return file
+    }
+  }
+  return null
 }
 
 export default function OverviewPage() {
@@ -327,6 +344,18 @@ export default function OverviewPage() {
     }
   }
 
+  async function clearProjectImage(project: ProjectMeta) {
+    try {
+      setError(null)
+      const updated = await apiPatch<ProjectMeta>(`/api/projects/${project.id}`, {
+        card_image_data: null,
+      })
+      upsertProjectMeta(updated)
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
   useEffect(() => {
     if (!createOpen) return
     const onKeyDown = (e: KeyboardEvent) => {
@@ -462,7 +491,7 @@ export default function OverviewPage() {
                   onDrop={(e) => {
                     e.preventDefault()
                     e.stopPropagation()
-                    const droppedFile = e.dataTransfer.files?.[0]
+                    const droppedFile = getDroppedFile(e)
                     if (droppedFile) {
                       void uploadProjectImage(p, droppedFile)
                       return
@@ -530,6 +559,19 @@ export default function OverviewPage() {
                       <button
                         type="button"
                         className="project-tile-thumb-btn"
+                        onDragOver={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          e.dataTransfer.dropEffect = "copy"
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          const droppedFile = getDroppedFile(e)
+                          if (droppedFile) {
+                            void uploadProjectImage(p, droppedFile)
+                          }
+                        }}
                         onMouseDown={(e) => {
                           e.preventDefault()
                           e.stopPropagation()
@@ -543,11 +585,30 @@ export default function OverviewPage() {
                         aria-label={`Выбрать изображение для ${p.title}`}
                       >
                       {p.card_image_data ? (
-                        <img
-                          className="project-tile-thumb"
-                          src={p.card_image_data}
-                          alt={`Миниатюра ${p.title}`}
-                        />
+                        <>
+                          <img
+                            className="project-tile-thumb"
+                            src={p.card_image_data}
+                            alt={`Миниатюра ${p.title}`}
+                          />
+                          <button
+                            type="button"
+                            className="project-tile-thumb-remove-btn"
+                            aria-label={`Удалить изображение ${p.title}`}
+                            title="Удалить изображение"
+                            onMouseDown={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                            }}
+                            onClick={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              void clearProjectImage(p)
+                            }}
+                          >
+                            ×
+                          </button>
+                        </>
                       ) : (
                         <div className="project-tile-thumb project-tile-thumb-empty" />
                       )}

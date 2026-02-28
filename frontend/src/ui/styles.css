@@ -849,6 +849,7 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   background: transparent;
   display: block;
   cursor: pointer;
+  position: relative;
 }
 
 .project-tile-file-input {
@@ -857,6 +858,35 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   height: 1px;
   opacity: 0;
   pointer-events: none;
+}
+
+.project-tile-thumb-remove-btn {
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  min-height: 16px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.64);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.project-tile-thumb-wrap:hover .project-tile-thumb-remove-btn,
+.project-tile-thumb-wrap:focus-within .project-tile-thumb-remove-btn {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .project-tile-text {
