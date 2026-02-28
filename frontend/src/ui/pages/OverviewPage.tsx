@@ -379,12 +379,15 @@ export default function OverviewPage() {
           <div className="overview-search-wrap">
             <input
               className="overview-search-input"
-              placeholder="Поиск проекта"
+              aria-label="Поиск проекта"
               value={projectSearch}
               onChange={(e) => setProjectSearch(e.target.value)}
             />
             <span className="overview-search-icon" aria-hidden="true">
-              🔍
+              <svg className="overview-search-icon-svg" viewBox="0 0 24 24" fill="none">
+                <circle cx="10.5" cy="10.5" r="6.25" />
+                <path d="M15.3 15.3L20 20" />
+              </svg>
             </span>
           </div>
         </div>

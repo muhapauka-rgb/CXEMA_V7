@@ -684,7 +684,7 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 }
 
 .overview-search-wrap {
-  width: min(260px, 42vw);
+  width: min(182px, 30vw);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -710,8 +710,22 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 
 .overview-search-icon {
   color: var(--muted);
-  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
   line-height: 1;
+  opacity: 0.95;
+}
+
+.overview-search-icon-svg {
+  width: 13px;
+  height: 13px;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .project-tile {
@@ -756,12 +770,12 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 
 .project-delete-btn {
   position: absolute;
-  left: 8px;
-  top: 2px;
-  min-width: 16px;
-  width: 16px;
-  min-height: 16px;
-  height: 16px;
+  left: 4px;
+  top: 0;
+  min-width: 26px;
+  width: 26px;
+  min-height: 24px;
+  height: 24px;
   border: 0;
   background: transparent;
   color: var(--muted);
@@ -769,6 +783,9 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   font-weight: 700;
   line-height: 1;
   padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   opacity: 0;
   pointer-events: none;
   cursor: pointer;
@@ -788,11 +805,11 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 .project-pause-btn {
   position: absolute;
   left: 30px;
-  top: 2px;
-  min-width: 16px;
-  width: 16px;
-  min-height: 16px;
-  height: 16px;
+  top: 0;
+  min-width: 26px;
+  width: 26px;
+  min-height: 24px;
+  height: 24px;
   border: 0;
   background: transparent;
   color: var(--muted);
@@ -800,6 +817,9 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   font-weight: 800;
   line-height: 1;
   padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   opacity: 0;
   pointer-events: none;
   cursor: pointer;
@@ -831,7 +851,7 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 .project-tile-thumb {
   width: 100px;
   height: 100px;
-  border-radius: 16px;
+  border-radius: var(--radius);
   border: 0;
   object-fit: cover;
   display: block;
@@ -1730,7 +1750,7 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   .project-tile-thumb {
     width: 72px;
     height: 72px;
-    border-radius: 12px;
+    border-radius: var(--radius);
   }
 
   .h1 {
