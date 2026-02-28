@@ -57,7 +57,8 @@ function parseMonthKey(key: string): Date {
 function monthLabelRu(key: string): string {
   const d = parseMonthKey(key)
   const month = new Intl.DateTimeFormat("ru-RU", { month: "long" }).format(d)
-  return `${month} ${d.getFullYear()}`
+  const monthCap = month ? month.charAt(0).toUpperCase() + month.slice(1) : month
+  return `${monthCap} ${d.getFullYear()}`
 }
 
 export default function LifePage() {

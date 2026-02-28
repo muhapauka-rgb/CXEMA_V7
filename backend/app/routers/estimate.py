@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal, ROUND_HALF_UP
 from html import escape
 from io import BytesIO
 import re
@@ -31,6 +32,14 @@ def _safe_num(value: Any) -> float:
 
 def _fmt_money(value: float) -> str:
     return f"{float(value or 0.0):,.2f}".replace(",", " ").replace(".", ",")
+
+
+def _fmt_money_no_dec(value: Any) -> str:
+    try:
+        rounded = Decimal(str(value if value is not None else 0)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+        return f"{int(rounded):,}".replace(",", " ")
+    except Exception:
+        return f"{int(round(_safe_num(value))):,}".replace(",", " ")
 
 
 def _fmt_plain(value: Any) -> str:
@@ -1043,8 +1052,621 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
 </html>"""
 
 
+def _render_estimate2_html(payload: dict[str, Any]) -> str:
+    project = payload["project"]
+    expense_groups = payload.get("expense_groups", [])
+    payments = payload["payments_plan"]
+    totals = payload["totals"]
+
+    rows_payments = []
+    for row in payments:
+        date = escape(_fmt_date_long(row["pay_date"]))
+        amount = escape(_fmt_money_no_dec(row["amount"]))
+        status = escape(_fmt_plain(row.get("status")))
+        rows_payments.append(
+            f"""
+            <tr>
+              <td class="center">{date}</td>
+              <td class="num strong">{amount}</td>
+              <td class="center">{status}</td>
+            </tr>
+            """
+        )
+    if not rows_payments:
+        rows_payments.append('<tr><td colspan="3" class="empty">Нет оплат</td></tr>')
+
+    agency_percent = escape(_fmt_money_no_dec(project.get("agency_fee_percent", 0)))
+    common_agency_amount = _safe_num(totals.get("common_agency_amount"))
+    expense_rows: list[str] = []
+    for group_idx, group in enumerate(expense_groups):
+        group_name = escape(_fmt_plain(group.get("group_name")))
+        expense_rows.append(f'<tr class="group-title-row"><td colspan="4"><strong>{group_name}</strong></td></tr>')
+
+        rows = group.get("rows", [])
+        if not rows:
+            expense_rows.append('<tr><td colspan="4" class="empty">Нет строк, отмеченных в смету</td></tr>')
+
+        for row in rows:
+            title = escape(str(row["title"]))
+            if row["is_subitem"]:
+                title = f'<span class="sub">↳ {title}</span>'
+            qty = "" if row["qty"] is None else escape(_fmt_money_no_dec(row["qty"]))
+            unit_price = "" if row["unit_price"] is None else escape(_fmt_money_no_dec(row["unit_price"]))
+            row_sum = escape(_fmt_money_no_dec(row["sum"]))
+            expense_rows.append(
+                f"""
+                <tr>
+                  <td>{title}</td>
+                  <td class="center">{qty}</td>
+                  <td class="num">{unit_price}</td>
+                  <td class="num strong">{row_sum}</td>
+                </tr>
+                """
+            )
+
+        agency_amount = _safe_num(group.get("agency_amount"))
+        if agency_amount > 0:
+            expense_rows.append(
+                f"""
+                <tr class="sum-row agency-row">
+                  <td><strong>Агентские ({agency_percent}%)</strong></td>
+                  <td></td>
+                  <td></td>
+                  <td class="num strong">{escape(_fmt_money_no_dec(agency_amount))}</td>
+                </tr>
+                """
+            )
+
+        expense_rows.append(
+            f"""
+            <tr class="sum-row">
+              <td><strong>Итого</strong></td>
+              <td></td>
+              <td></td>
+              <td class="num strong">{escape(_fmt_money_no_dec(group.get("total_with_agency", 0.0)))}</td>
+            </tr>
+            """
+        )
+        if group_idx < len(expense_groups) - 1:
+            expense_rows.append('<tr class="group-gap"><td colspan="4"></td></tr>')
+
+    if common_agency_amount > 0:
+        expense_rows.append(
+            f"""
+            <tr class="sum-row agency-row">
+              <td><strong>Агентские ({agency_percent}%)</strong></td>
+              <td></td>
+              <td></td>
+              <td class="num strong">{escape(_fmt_money_no_dec(common_agency_amount))}</td>
+            </tr>
+            """
+        )
+
+    if not expense_rows:
+        expense_rows.append('<tr><td colspan="4" class="empty">Нет строк, отмеченных в смету</td></tr>')
+
+    project_title = escape(_fmt_plain(project["title"]))
+    generated_at = escape(_fmt_generated_at(project.get("generated_at")))
+
+    expenses_today = escape(_fmt_money_no_dec(totals["expenses_today"]))
+    expenses_before_usn = escape(_fmt_money_no_dec(totals["expenses_before_usn"]))
+    usn_rate_percent = escape(_fmt_money_no_dec(totals["usn_rate_percent"]))
+    usn_amount = escape(_fmt_money_no_dec(totals["usn_amount"]))
+    expenses_with_usn = escape(_fmt_money_no_dec(totals["expenses_with_usn"]))
+    project_price = escape(_fmt_money_no_dec(project["project_price_total"]))
+
+    return f"""<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Смета 2 — {project_title}</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;800&family=Roboto+Mono:wght@400;500;700&display=swap');
+    :root {{
+      --bg:#f4f4f4; --text:#111111; --muted:#555555; --line:#cfcfcf; --head:#000000; --headText:#ffffff;
+    }}
+    * {{ box-sizing:border-box; }}
+    body {{ margin:0; background:var(--bg); color:var(--text); font:12.5px/1.25 "Roboto","Segoe UI",Arial,sans-serif; }}
+    .page {{ max-width:780px; margin:8px auto 12px; padding:0 10px; }}
+    .top-row {{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:10px;
+      margin-bottom:12px;
+    }}
+    .h1 {{ margin:0; font-size:24px; font-weight:800; letter-spacing:-0.01em; }}
+    .generated-at {{ color:var(--muted); font-size:13px; font-weight:500; margin-top:4px; white-space:nowrap; }}
+    .totals-strip {{
+      display:grid;
+      grid-template-columns:repeat(2,minmax(0,1fr));
+      gap:8px;
+      margin-bottom:30px;
+    }}
+    .total {{
+      border:1px solid var(--line);
+      border-radius:8px;
+      padding:6px 8px;
+      background:#fff;
+      font-family:"Roboto","Segoe UI",Arial,sans-serif !important;
+    }}
+    .total .k {{ color:var(--muted); font-size:11px; margin-bottom:2px; font-family:"Roboto","Segoe UI",Arial,sans-serif !important; }}
+    .total .v {{ font-size:19px; font-weight:800; font-family:"Roboto","Segoe UI",Arial,sans-serif !important; }}
+    .stack {{ display:grid; gap:10px; }}
+    .panel {{ border:1px solid var(--line); border-radius:0; background:#fff; overflow:hidden; }}
+    .panel-h {{ background:var(--head); color:var(--headText); padding:7px 10px; font-size:13px; font-weight:700; font-family:"Roboto","Segoe UI",Arial,sans-serif; }}
+    table {{ width:100%; border-collapse:collapse; table-layout:fixed; font-family:"Roboto Mono","Consolas","Menlo","Monaco",monospace; }}
+    .expenses-table thead th:nth-child(1) {{ text-align:left; }}
+    .expenses-table thead th:nth-child(2) {{ text-align:center; }}
+    .expenses-table thead th:nth-child(3),
+    .expenses-table thead th:nth-child(4) {{ text-align:right; }}
+    th, td {{ border:1px solid var(--line); padding:5px 6px; vertical-align:middle; }}
+    th {{ background:#f0f0f0; color:#202020; font-size:11px; font-weight:700; text-align:center; line-height:1.15; }}
+    td {{ background:#fff; }}
+    td.num {{ text-align:right; font-variant-numeric:tabular-nums; }}
+    td.center {{ text-align:center; }}
+    td.strong {{ font-weight:700; }}
+    .sub {{ color:#303030; }}
+    .empty {{ text-align:center; color:var(--muted); padding:9px; }}
+    .group-title-row td {{ background:#000; color:#fff; font-weight:700; border-top:0 !important; }}
+    .sum-row td {{ background:#fafafa; border-bottom:1px solid var(--line) !important; }}
+    .header-gap td {{
+      border:0 !important;
+      border-left:0 !important;
+      border-right:0 !important;
+      padding:0;
+      height:21px;
+      background:var(--bg);
+      line-height:0;
+    }}
+    .group-gap td {{
+      border:0 !important;
+      padding:0;
+      height:42px;
+      background:var(--bg);
+      line-height:0;
+    }}
+    .totals-strip-bottom {{
+      margin-top:10px;
+      margin-bottom:10px;
+    }}
+    @media print {{
+      @page {{ size: A4 portrait; margin: 8mm; }}
+      body {{ background:#fff; }}
+      .page {{ max-width:none; margin:0; padding:0; }}
+      .h1 {{ font-size:16px; }}
+      .generated-at {{ font-size:10px; }}
+      .totals-strip {{ gap:6px; margin-bottom:24px; }}
+      .total {{ padding:4px 6px; }}
+      .total .k {{ font-size:9px; }}
+      .total .v {{ font-size:14px; }}
+      .panel-h {{ font-size:11px; padding:5px 7px; }}
+      th, td {{ padding:3px 4px; font-size:10px; }}
+      .panel {{ break-inside:avoid; page-break-inside:avoid; }}
+      .group-gap td {{ height:16px; }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="top-row">
+      <h1 class="h1">Смета проекта: {project_title}</h1>
+      <div class="generated-at">Сформировано: {generated_at}</div>
+    </div>
+
+    <div class="totals-strip">
+      <div class="total"><div class="k">Стоимость проекта</div><div class="v">{project_price}</div></div>
+      <div class="total"><div class="k">Расходы на сегодня</div><div class="v">{expenses_today}</div></div>
+    </div>
+
+    <div class="stack">
+      <section class="panel">
+        <div class="panel-h">Расходы</div>
+        <table class="expenses-table">
+          <thead>
+            <tr>
+              <th style="width:53%">Статья</th>
+              <th style="width:9%">Шт</th>
+              <th style="width:19%">Цена за ед</th>
+              <th style="width:19%">Сумма</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="header-gap"><td colspan="4"></td></tr>
+            {''.join(expense_rows)}
+          </tbody>
+        </table>
+      </section>
+
+      <div class="totals-strip totals-strip-bottom">
+        <div class="total"><div class="k">Сумма (до УСН)</div><div class="v">{expenses_before_usn}</div></div>
+        <div class="total"><div class="k">УСН ({usn_rate_percent}%)</div><div class="v">{usn_amount}</div></div>
+        <div class="total"><div class="k">Сумма с УСН</div><div class="v">{expenses_with_usn}</div></div>
+      </div>
+
+      <section class="panel">
+        <div class="panel-h">План по оплатам</div>
+        <table>
+          <thead>
+            <tr>
+              <th style="width:48%">Дата оплаты</th>
+              <th style="width:32%">Сумма</th>
+              <th style="width:20%">Статус</th>
+            </tr>
+          </thead>
+          <tbody>
+            {''.join(rows_payments)}
+          </tbody>
+        </table>
+      </section>
+    </div>
+  </div>
+</body>
+</html>"""
+
+
+def _render_estimate2_pdf(payload: dict[str, Any]) -> bytes:
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.units import mm
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+        from reportlab.pdfgen import canvas
+    except Exception as exc:
+        raise ValueError("PDF_LIBRARIES_NOT_INSTALLED") from exc
+
+    font_regular = "Helvetica"
+    font_bold = "Helvetica-Bold"
+    font_table = "Courier"
+    font_candidates = [
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        "/Library/Fonts/Arial Unicode.ttf",
+    ]
+    for font_path in font_candidates:
+        try:
+            pdfmetrics.registerFont(TTFont("CXEMASans", font_path))
+            pdfmetrics.registerFont(TTFont("CXEMASans-Bold", font_path))
+            font_regular = "CXEMASans"
+            font_bold = "CXEMASans-Bold"
+            font_table = "CXEMASans"
+            break
+        except Exception:
+            continue
+
+    project = payload["project"]
+    expense_groups = payload.get("expense_groups", [])
+    payments = payload.get("payments_plan", [])
+    totals = payload["totals"]
+
+    line = colors.HexColor("#cfcfcf")
+    bg_header = colors.black
+    bg_muted = colors.HexColor("#f0f0f0")
+    bg_sum = colors.HexColor("#fafafa")
+
+    def row_h(base: float, k: float) -> float:
+        return max(base * k, 7.0)
+
+    n_payment_rows = max(1, len(payments))
+    n_group_gaps = max(0, len(expense_groups) - 1)
+    n_expense_rows = 0
+    for g in expense_groups:
+        n_expense_rows += 1
+        n_expense_rows += len(g.get("rows") or [])
+        if _safe_num(g.get("agency_amount")) > 0:
+            n_expense_rows += 1
+        n_expense_rows += 1
+    if _safe_num(totals.get("common_agency_amount")) > 0:
+        n_expense_rows += 1
+
+    page_w, page_h = A4
+    margin = 8 * mm
+    content_h = page_h - 2 * margin
+
+    expenses_table_h = 18 + 17 + 12 + (n_expense_rows * 16) + (n_group_gaps * 20)
+    totals_block_h = 38
+    payments_table_h = 18 + 17 + (n_payment_rows * 16)
+    required_h = 18 + 10 + 30 + 8 + expenses_table_h + 8 + totals_block_h + 8 + payments_table_h
+    k = min(1.0, content_h / max(required_h, 1))
+
+    h_title = row_h(18, k)
+    h_after_title = row_h(10, k)
+    h_card = row_h(30, k)
+    h_after_cards = row_h(24, k)
+    h_panel_h = row_h(18, k)
+    h_head = row_h(17, k)
+    h_header_gap = row_h(12, k)
+    h_row = row_h(16, k)
+    h_group_gap = row_h(20, k)
+    h_after_expenses = row_h(8, k)
+    h_total_card = row_h(38, k)
+    h_after_totals = row_h(8, k)
+
+    f_base = 10.0
+    f_title = f_base + 1
+    f_meta = f_base - 1
+    f_tbl_h = f_base - 0.2
+    f_tbl = f_base - 0.2
+    f_top_label = f_base
+    f_top_value = f_base + 2
+    f_bottom_label = f_base
+    f_bottom_value = f_base + 2
+
+    buf = BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    c.setTitle(f"Смета 2 — {project.get('title', '')}")
+    c.setFillColor(colors.white)
+    c.rect(0, 0, page_w, page_h, stroke=0, fill=1)
+
+    x0 = margin
+    y_top = page_h - margin
+    content_w = page_w - (2 * margin)
+    gap = row_h(6, k)
+
+    def rect_top(
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        fill_color: Any = None,
+        stroke_color: Any = line,
+        stroke_width: float = 0.8,
+    ) -> None:
+        if fill_color is not None:
+            c.setFillColor(fill_color)
+        else:
+            c.setFillColor(colors.white)
+        c.setStrokeColor(stroke_color)
+        c.setLineWidth(stroke_width)
+        c.rect(x, y - h, w, h, stroke=1, fill=1)
+
+    def draw_text_left(
+        x: float,
+        y: float,
+        h: float,
+        text: str,
+        font_name: str,
+        font_size: float,
+        color: Any = colors.black,
+        pad: float = 6.0,
+    ) -> None:
+        c.setFillColor(color)
+        c.setFont(font_name, font_size)
+        base = y - (h + font_size) / 2 + 2
+        c.drawString(x + pad, base, text)
+
+    def draw_text_center(
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        text: str,
+        font_name: str,
+        font_size: float,
+        color: Any = colors.black,
+    ) -> None:
+        c.setFillColor(color)
+        c.setFont(font_name, font_size)
+        base = y - (h + font_size) / 2 + 2
+        tw = c.stringWidth(text, font_name, font_size)
+        c.drawString(x + (w - tw) / 2, base, text)
+
+    def draw_text_right(
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        text: str,
+        font_name: str,
+        font_size: float,
+        color: Any = colors.black,
+        pad: float = 6.0,
+    ) -> None:
+        c.setFillColor(color)
+        c.setFont(font_name, font_size)
+        base = y - (h + font_size) / 2 + 2
+        c.drawRightString(x + w - pad, base, text)
+
+    project_title = _fmt_plain(project.get("title"))
+    generated_at = _fmt_generated_at(project.get("generated_at"))
+    c.setFillColor(colors.black)
+    c.setFont(font_bold, f_title)
+    c.drawString(x0, y_top - f_title, f"Смета проекта: {project_title}")
+    c.setFillColor(colors.HexColor("#555555"))
+    c.setFont(font_regular, f_meta)
+    c.drawRightString(x0 + content_w, y_top - f_meta, f"Сформировано: {generated_at}")
+    y = y_top - h_title - h_after_title
+
+    card_w = (content_w - gap) / 2.0
+    kpi = [
+        ("Стоимость проекта", _fmt_money_no_dec(project.get("project_price_total", 0.0))),
+        ("Расходы на сегодня", _fmt_money_no_dec(totals.get("expenses_today", 0.0))),
+    ]
+    for i, (label, value) in enumerate(kpi):
+        x = x0 + i * (card_w + gap)
+        rect_top(x, y, card_w, h_card, fill_color=colors.white, stroke_color=line)
+        c.setFillColor(colors.HexColor("#555555"))
+        c.setFont(font_regular, f_top_label)
+        c.drawString(x + 6, y - f_top_label - 5, label)
+        c.setFillColor(colors.black)
+        c.setFont(font_bold, f_top_value)
+        c.drawString(x + 6, y - h_card + 6, value)
+    y -= h_card + h_after_cards
+
+    exp_x = x0
+    exp_w = content_w
+    exp_cols = [exp_w * 0.53, exp_w * 0.09, exp_w * 0.19, exp_w * 0.19]
+    rect_top(exp_x, y, exp_w, h_panel_h, fill_color=bg_header, stroke_color=bg_header)
+    draw_text_left(exp_x, y, h_panel_h, "Расходы", font_bold, f_tbl_h, colors.white, 8)
+    y -= h_panel_h
+
+    x = exp_x
+    headers = ["Статья", "Шт", "Цена за ед", "Сумма"]
+    for i, w in enumerate(exp_cols):
+        rect_top(x, y, w, h_head, fill_color=bg_muted, stroke_color=line)
+        if i == 0:
+            draw_text_left(x, y, h_head, headers[i], font_bold, f_tbl_h, colors.HexColor("#202020"), 6)
+        elif i == 1:
+            draw_text_center(x, y, w, h_head, headers[i], font_bold, f_tbl_h, colors.HexColor("#202020"))
+        else:
+            draw_text_right(x, y, w, h_head, headers[i], font_bold, f_tbl_h, colors.HexColor("#202020"), 6)
+        x += w
+    y -= h_head + h_header_gap
+
+    agency_percent = _fmt_money_no_dec(project.get("agency_fee_percent", 0))
+    for idx, group in enumerate(expense_groups):
+        rect_top(exp_x, y, exp_w, h_row, fill_color=bg_header, stroke_color=bg_header)
+        draw_text_left(exp_x, y, h_row, _fmt_plain(group.get("group_name")), font_bold, f_tbl, colors.white, 6)
+        y -= h_row
+
+        for row in group.get("rows") or []:
+            x = exp_x
+            title = str(row.get("title") or "")
+            if row.get("is_subitem"):
+                title = f"↳ {title}"
+            vals = [
+                title,
+                "" if row.get("qty") is None else _fmt_money_no_dec(row.get("qty")),
+                "" if row.get("unit_price") is None else _fmt_money_no_dec(row.get("unit_price")),
+                _fmt_money_no_dec(row.get("sum")),
+            ]
+            for i, w in enumerate(exp_cols):
+                rect_top(x, y, w, h_row, fill_color=colors.white, stroke_color=line)
+                if i == 0:
+                    draw_text_left(x, y, h_row, vals[i], font_table, f_tbl, colors.black, 6)
+                elif i == 1:
+                    draw_text_center(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black)
+                else:
+                    draw_text_right(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black, 6)
+                x += w
+            y -= h_row
+
+        agency_amount = _safe_num(group.get("agency_amount"))
+        if agency_amount > 0:
+            x = exp_x
+            vals = [f"Агентские ({agency_percent}%)", "", "", _fmt_money_no_dec(agency_amount)]
+            for i, w in enumerate(exp_cols):
+                rect_top(x, y, w, h_row, fill_color=bg_sum, stroke_color=line)
+                if i == 0:
+                    draw_text_left(x, y, h_row, vals[i], font_bold, f_tbl, colors.black, 6)
+                elif i == 1:
+                    draw_text_center(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black)
+                else:
+                    draw_text_right(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black, 6)
+                x += w
+            y -= h_row
+
+        x = exp_x
+        vals = ["Итого", "", "", _fmt_money_no_dec(group.get("total_with_agency", 0.0))]
+        for i, w in enumerate(exp_cols):
+            rect_top(x, y, w, h_row, fill_color=bg_sum, stroke_color=line)
+            if i == 0:
+                draw_text_left(x, y, h_row, vals[i], font_bold, f_tbl, colors.black, 6)
+            elif i == 1:
+                draw_text_center(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black)
+            else:
+                draw_text_right(x, y, w, h_row, vals[i], font_bold if i == 3 else font_table, f_tbl, colors.black, 6)
+            x += w
+        y -= h_row
+
+        if idx < len(expense_groups) - 1:
+            y -= h_group_gap
+
+    common_agency_amount = _safe_num(totals.get("common_agency_amount"))
+    if common_agency_amount > 0:
+        x = exp_x
+        vals = [f"Агентские ({agency_percent}%)", "", "", _fmt_money_no_dec(common_agency_amount)]
+        for i, w in enumerate(exp_cols):
+            rect_top(x, y, w, h_row, fill_color=bg_sum, stroke_color=line)
+            if i == 0:
+                draw_text_left(x, y, h_row, vals[i], font_bold, f_tbl, colors.black, 6)
+            elif i == 1:
+                draw_text_center(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black)
+            else:
+                draw_text_right(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black, 6)
+            x += w
+        y -= h_row
+
+    y -= h_after_expenses
+
+    total_card_w = (content_w - (2 * gap)) / 3.0
+    totals_cards = [
+        ("Сумма (до УСН)", _fmt_money_no_dec(totals.get("expenses_before_usn", 0.0))),
+        (f"УСН ({_fmt_money_no_dec(totals.get('usn_rate_percent', 0.0))}%)", _fmt_money_no_dec(totals.get("usn_amount", 0.0))),
+        ("Сумма с УСН", _fmt_money_no_dec(totals.get("expenses_with_usn", 0.0))),
+    ]
+    for idx, (label, value) in enumerate(totals_cards):
+        x = x0 + idx * (total_card_w + gap)
+        rect_top(x, y, total_card_w, h_total_card, fill_color=colors.white, stroke_color=line)
+        c.setFillColor(colors.HexColor("#555555"))
+        c.setFont(font_regular, f_bottom_label)
+        c.drawString(x + 6, y - f_bottom_label - 6, label)
+        c.setFillColor(colors.black)
+        c.setFont(font_bold, f_bottom_value)
+        c.drawString(x + 6, y - h_total_card + 8, value)
+    y -= h_total_card + h_after_totals
+
+    pay_x = exp_x
+    pay_w = exp_w
+    pay_cols = [pay_w * 0.48, pay_w * 0.32, pay_w * 0.20]
+    rect_top(pay_x, y, pay_w, h_panel_h, fill_color=bg_header, stroke_color=bg_header)
+    draw_text_left(pay_x, y, h_panel_h, "План по оплатам", font_bold, f_tbl_h, colors.white, 8)
+    y -= h_panel_h
+
+    x = pay_x
+    pay_headers = ["Дата оплаты", "Сумма", "Статус"]
+    for i, w in enumerate(pay_cols):
+        rect_top(x, y, w, h_head, fill_color=bg_muted, stroke_color=line)
+        if i == 0:
+            draw_text_center(x, y, w, h_head, pay_headers[i], font_bold, f_tbl_h, colors.HexColor("#202020"))
+        elif i == 1:
+            draw_text_right(x, y, w, h_head, pay_headers[i], font_bold, f_tbl_h, colors.HexColor("#202020"), 6)
+        else:
+            draw_text_center(x, y, w, h_head, pay_headers[i], font_bold, f_tbl_h, colors.HexColor("#202020"))
+        x += w
+    y -= h_head
+
+    payment_rows = payments or [{"pay_date": None, "amount": "", "status": "Нет оплат"}]
+    for row in payment_rows:
+        x = pay_x
+        vals = [
+            _fmt_date_long(row.get("pay_date")),
+            _fmt_money_no_dec(row.get("amount")) if row.get("amount") not in {"", None} else "",
+            _fmt_plain(row.get("status")),
+        ]
+        for i, w in enumerate(pay_cols):
+            rect_top(x, y, w, h_row, fill_color=colors.white, stroke_color=line)
+            if i == 0:
+                draw_text_center(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black)
+            elif i == 1:
+                draw_text_right(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black, 6)
+            else:
+                draw_text_center(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black)
+            x += w
+        y -= h_row
+
+    c.save()
+    return buf.getvalue()
+
+
 @router.get("/{project_id}/estimate/data")
 def estimate_data(
+    project_id: int,
+    group_agency_ids: Optional[str] = Query(default=None),
+    common_agency: bool = Query(default=False),
+    db: Session = Depends(get_db),
+):
+    return _estimate_payload(
+        db,
+        project_id,
+        group_agency_ids=_parse_group_ids(group_agency_ids),
+        common_agency_enabled=bool(common_agency),
+    )
+
+
+@router.get("/{project_id}/estimate2/data")
+def estimate2_data(
     project_id: int,
     group_agency_ids: Optional[str] = Query(default=None),
     common_agency: bool = Query(default=False),
@@ -1074,6 +1696,22 @@ def estimate_page(
     return HTMLResponse(content=_render_estimate_html(payload), media_type="text/html; charset=utf-8")
 
 
+@router.get("/{project_id}/estimate2/page", response_class=HTMLResponse)
+def estimate2_page(
+    project_id: int,
+    group_agency_ids: Optional[str] = Query(default=None),
+    common_agency: bool = Query(default=False),
+    db: Session = Depends(get_db),
+):
+    payload = _estimate_payload(
+        db,
+        project_id,
+        group_agency_ids=_parse_group_ids(group_agency_ids),
+        common_agency_enabled=bool(common_agency),
+    )
+    return HTMLResponse(content=_render_estimate2_html(payload), media_type="text/html; charset=utf-8")
+
+
 @router.post("/{project_id}/estimate/drive-upload")
 def upload_estimate_to_drive(
     project_id: int,
@@ -1090,6 +1728,70 @@ def upload_estimate_to_drive(
             common_agency_enabled=bool(common_agency),
         )
         pdf_bytes = _render_estimate_pdf(payload)
+
+        creds = _load_google_credentials(required=True)
+        _, _, _, build = _import_google_deps()
+        try:
+            from googleapiclient.http import MediaInMemoryUpload
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail="GOOGLE_LIBRARIES_NOT_INSTALLED") from exc
+
+        drive = build("drive", "v3", credentials=creds, cache_discovery=False)
+        folder_id = _resolve_drive_folder_id(drive, project)
+
+        file_name = "Смета.pdf"
+        metadata: dict[str, Any] = {
+            "name": file_name,
+            "mimeType": "application/pdf",
+        }
+        if folder_id:
+            metadata["parents"] = [folder_id]
+
+        media = MediaInMemoryUpload(pdf_bytes, mimetype="application/pdf", resumable=False)
+        created = drive.files().create(
+            body=metadata,
+            media_body=media,
+            fields="id,name,webViewLink,webContentLink,parents",
+            supportsAllDrives=True,
+        ).execute()
+        return {
+            "ok": True,
+            "file_id": created.get("id"),
+            "name": created.get("name"),
+            "web_view_link": created.get("webViewLink"),
+            "web_content_link": created.get("webContentLink"),
+            "folder_id": folder_id,
+        }
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        detail = str(exc)
+        status = 400
+        if detail in {"GOOGLE_AUTH_REQUIRED", "GOOGLE_TOKEN_INVALID", "GOOGLE_TOKEN_REFRESH_FAILED"}:
+            status = 401
+        if detail == "PDF_LIBRARIES_NOT_INSTALLED":
+            status = 500
+        raise HTTPException(status_code=status, detail=detail) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/{project_id}/estimate2/drive-upload")
+def upload_estimate2_to_drive(
+    project_id: int,
+    group_agency_ids: Optional[str] = Query(default=None),
+    common_agency: int = Query(default=0),
+    db: Session = Depends(get_db),
+):
+    project = _project_or_404(db, project_id)
+    try:
+        payload = _estimate_payload(
+            db=db,
+            project_id=project_id,
+            group_agency_ids=_parse_group_ids(group_agency_ids),
+            common_agency_enabled=bool(common_agency),
+        )
+        pdf_bytes = _render_estimate2_pdf(payload)
 
         creds = _load_google_credentials(required=True)
         _, _, _, build = _import_google_deps()

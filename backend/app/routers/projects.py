@@ -270,12 +270,6 @@ def create_project(payload: ProjectCreate, db: Session = Depends(get_db)):
     db.add(p)
     db.commit()
     db.refresh(p)
-
-    # default groups
-    for idx, name in enumerate(["Стройка", "Команда", "Дизайн"]):
-        g = ExpenseGroup(project_id=p.id, name=name, sort_order=idx)
-        db.add(g)
-    db.commit()
     return p
 
 @router.get("/{project_id}", response_model=ProjectOut)

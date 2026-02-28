@@ -479,6 +479,7 @@ export default function ProjectPage() {
   const [error, setError] = useState<string | null>(null)
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null)
   const [driveUploadBusy, setDriveUploadBusy] = useState(false)
+  const [driveUpload2Busy, setDriveUpload2Busy] = useState(false)
   const [projectPriceDraft, setProjectPriceDraft] = useState("0")
   const [savingProjectPrice, setSavingProjectPrice] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
@@ -728,8 +729,7 @@ export default function ProjectPage() {
     }
   }
 
-  function openEstimatePage() {
-    if (!Number.isFinite(projectId)) return
+  function buildEstimateQueryString() {
     const params = new URLSearchParams()
     const enabledGroupAgencyIds = groups
       .filter((g) => !!groupAgencyEnabled[g.id])
@@ -740,9 +740,28 @@ export default function ProjectPage() {
     if (isCommonAgencyOpen) {
       params.set("common_agency", "1")
     }
-    const qs = params.toString()
+    return params.toString()
+  }
+
+  function openExternalPage(url: string) {
+    const popup = window.open(url, "_blank", "noopener,noreferrer")
+    if (popup) return
+    // Fallback for browsers/environments that block popups.
+    window.location.assign(url)
+  }
+
+  function openEstimatePage() {
+    if (!Number.isFinite(projectId)) return
+    const qs = buildEstimateQueryString()
     const url = `${API_BASE}/api/projects/${projectId}/estimate/page${qs ? `?${qs}` : ""}`
-    window.open(url, "_blank", "noopener,noreferrer")
+    openExternalPage(url)
+  }
+
+  function openEstimate2Page() {
+    if (!Number.isFinite(projectId)) return
+    const qs = buildEstimateQueryString()
+    const url = `${API_BASE}/api/projects/${projectId}/estimate2/page${qs ? `?${qs}` : ""}`
+    openExternalPage(url)
   }
 
   async function uploadEstimateToDrive() {
@@ -750,28 +769,38 @@ export default function ProjectPage() {
     try {
       setError(null)
       setDriveUploadBusy(true)
-      const params = new URLSearchParams()
-      const enabledGroupAgencyIds = groups
-        .filter((g) => !!groupAgencyEnabled[g.id])
-        .map((g) => String(g.id))
-      if (enabledGroupAgencyIds.length > 0) {
-        params.set("group_agency_ids", enabledGroupAgencyIds.join(","))
-      }
-      if (isCommonAgencyOpen) {
-        params.set("common_agency", "1")
-      }
-      const qs = params.toString()
+      const qs = buildEstimateQueryString()
       const out = await apiPost<EstimateDriveUpload>(
         `/api/projects/${projectId}/estimate/drive-upload${qs ? `?${qs}` : ""}`,
         {},
       )
       if (out.web_view_link) {
-        window.open(out.web_view_link, "_blank", "noopener,noreferrer")
+        openExternalPage(out.web_view_link)
       }
     } catch (e) {
       setError(String(e))
     } finally {
       setDriveUploadBusy(false)
+    }
+  }
+
+  async function uploadEstimate2ToDrive() {
+    if (!Number.isFinite(projectId)) return
+    try {
+      setError(null)
+      setDriveUpload2Busy(true)
+      const qs = buildEstimateQueryString()
+      const out = await apiPost<EstimateDriveUpload>(
+        `/api/projects/${projectId}/estimate2/drive-upload${qs ? `?${qs}` : ""}`,
+        {},
+      )
+      if (out.web_view_link) {
+        openExternalPage(out.web_view_link)
+      }
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setDriveUpload2Busy(false)
     }
   }
 
@@ -1911,10 +1940,23 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
               </button>
               <button
                 className="btn"
+                onClick={openEstimate2Page}
+              >
+                Смета 2
+              </button>
+              <button
+                className="btn"
                 disabled={driveUploadBusy}
                 onClick={() => void uploadEstimateToDrive()}
               >
                 {driveUploadBusy ? "Отправка..." : "Смета в Drive"}
+              </button>
+              <button
+                className="btn"
+                disabled={driveUpload2Busy}
+                onClick={() => void uploadEstimate2ToDrive()}
+              >
+                {driveUpload2Busy ? "Отправка..." : "Смета 2 в Drive"}
               </button>
               <button
                 className="btn"
