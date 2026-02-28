@@ -1062,18 +1062,16 @@ def _render_estimate2_html(payload: dict[str, Any]) -> str:
     for row in payments:
         date = escape(_fmt_date_long(row["pay_date"]))
         amount = escape(_fmt_money_no_dec(row["amount"]))
-        status = escape(_fmt_plain(row.get("status")))
         rows_payments.append(
             f"""
             <tr>
               <td class="center">{date}</td>
               <td class="num strong">{amount}</td>
-              <td class="center">{status}</td>
             </tr>
             """
         )
     if not rows_payments:
-        rows_payments.append('<tr><td colspan="3" class="empty">Нет оплат</td></tr>')
+        rows_payments.append('<tr><td colspan="2" class="empty">Нет оплат</td></tr>')
 
     agency_percent = escape(_fmt_money_no_dec(project.get("agency_fee_percent", 0)))
     common_agency_amount = _safe_num(totals.get("common_agency_amount"))
@@ -1227,10 +1225,13 @@ def _render_estimate2_html(payload: dict[str, Any]) -> str:
       background:var(--bg);
       line-height:0;
     }}
-    .totals-strip-bottom {{
-      margin-top:10px;
-      margin-bottom:10px;
-    }}
+    .sum-table th:nth-child(1), .sum-table td:nth-child(1) {{ text-align:left; }}
+    .sum-table th:nth-child(2), .sum-table td:nth-child(2),
+    .sum-table th:nth-child(3), .sum-table td:nth-child(3) {{ text-align:right; }}
+    .payments-panel {{ width:50%; margin:0 auto; }}
+    .payments-table {{ width:100%; margin:0; }}
+    .payments-table th:nth-child(1), .payments-table td:nth-child(1) {{ text-align:center; }}
+    .payments-table th:nth-child(2), .payments-table td:nth-child(2) {{ text-align:right; }}
     @media print {{
       @page {{ size: A4 portrait; margin: 8mm; }}
       body {{ background:#fff; }}
@@ -1245,6 +1246,7 @@ def _render_estimate2_html(payload: dict[str, Any]) -> str:
       th, td {{ padding:3px 4px; font-size:10px; }}
       .panel {{ break-inside:avoid; page-break-inside:avoid; }}
       .group-gap td {{ height:16px; }}
+      .payments-panel {{ width:50%; }}
     }}
   </style>
 </head>
@@ -1279,20 +1281,33 @@ def _render_estimate2_html(payload: dict[str, Any]) -> str:
         </table>
       </section>
 
-      <div class="totals-strip totals-strip-bottom">
-        <div class="total"><div class="k">Сумма (до УСН)</div><div class="v">{expenses_before_usn}</div></div>
-        <div class="total"><div class="k">УСН ({usn_rate_percent}%)</div><div class="v">{usn_amount}</div></div>
-        <div class="total"><div class="k">Сумма с УСН</div><div class="v">{expenses_with_usn}</div></div>
-      </div>
-
       <section class="panel">
-        <div class="panel-h">План по оплатам</div>
-        <table>
+        <div class="panel-h">Сумма</div>
+        <table class="sum-table">
           <thead>
             <tr>
-              <th style="width:48%">Дата оплаты</th>
-              <th style="width:32%">Сумма</th>
-              <th style="width:20%">Статус</th>
+              <th style="width:34%">Сумма (до УСН)</th>
+              <th style="width:33%">УСН ({usn_rate_percent}%)</th>
+              <th style="width:33%">Сумма с УСН</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="num strong">{expenses_before_usn}</td>
+              <td class="num strong">{usn_amount}</td>
+              <td class="num strong">{expenses_with_usn}</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="panel payments-panel">
+        <div class="panel-h">План по оплатам</div>
+        <table class="payments-table">
+          <thead>
+            <tr>
+              <th style="width:60%">Дата оплаты</th>
+              <th style="width:40%">Сумма</th>
             </tr>
           </thead>
           <tbody>
@@ -1365,7 +1380,7 @@ def _render_estimate2_pdf(payload: dict[str, Any]) -> bytes:
     content_h = page_h - 2 * margin
 
     expenses_table_h = 18 + 17 + 12 + (n_expense_rows * 16) + (n_group_gaps * 20)
-    totals_block_h = 38
+    totals_block_h = 18 + 17 + 16
     payments_table_h = 18 + 17 + (n_payment_rows * 16)
     required_h = 18 + 10 + 30 + 8 + expenses_table_h + 8 + totals_block_h + 8 + payments_table_h
     k = min(1.0, content_h / max(required_h, 1))
@@ -1380,7 +1395,8 @@ def _render_estimate2_pdf(payload: dict[str, Any]) -> bytes:
     h_row = row_h(16, k)
     h_group_gap = row_h(20, k)
     h_after_expenses = row_h(8, k)
-    h_total_card = row_h(38, k)
+    h_sum_panel_h = row_h(18, k)
+    h_sum_head = row_h(17, k)
     h_after_totals = row_h(8, k)
 
     f_base = 10.0
@@ -1390,9 +1406,6 @@ def _render_estimate2_pdf(payload: dict[str, Any]) -> bytes:
     f_tbl = f_base - 0.2
     f_top_label = f_base
     f_top_value = f_base + 2
-    f_bottom_label = f_base
-    f_bottom_value = f_base + 2
-
     buf = BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
     c.setTitle(f"Смета 2 — {project.get('title', '')}")
@@ -1590,59 +1603,73 @@ def _render_estimate2_pdf(payload: dict[str, Any]) -> bytes:
 
     y -= h_after_expenses
 
-    total_card_w = (content_w - (2 * gap)) / 3.0
-    totals_cards = [
-        ("Сумма (до УСН)", _fmt_money_no_dec(totals.get("expenses_before_usn", 0.0))),
-        (f"УСН ({_fmt_money_no_dec(totals.get('usn_rate_percent', 0.0))}%)", _fmt_money_no_dec(totals.get("usn_amount", 0.0))),
-        ("Сумма с УСН", _fmt_money_no_dec(totals.get("expenses_with_usn", 0.0))),
-    ]
-    for idx, (label, value) in enumerate(totals_cards):
-        x = x0 + idx * (total_card_w + gap)
-        rect_top(x, y, total_card_w, h_total_card, fill_color=colors.white, stroke_color=line)
-        c.setFillColor(colors.HexColor("#555555"))
-        c.setFont(font_regular, f_bottom_label)
-        c.drawString(x + 6, y - f_bottom_label - 6, label)
-        c.setFillColor(colors.black)
-        c.setFont(font_bold, f_bottom_value)
-        c.drawString(x + 6, y - h_total_card + 8, value)
-    y -= h_total_card + h_after_totals
+    sum_x = exp_x
+    sum_w = exp_w
+    sum_cols = [sum_w * 0.34, sum_w * 0.33, sum_w * 0.33]
+    rect_top(sum_x, y, sum_w, h_sum_panel_h, fill_color=bg_header, stroke_color=bg_header)
+    draw_text_left(sum_x, y, h_sum_panel_h, "Сумма", font_bold, f_tbl_h, colors.white, 8)
+    y -= h_sum_panel_h
 
-    pay_x = exp_x
-    pay_w = exp_w
-    pay_cols = [pay_w * 0.48, pay_w * 0.32, pay_w * 0.20]
+    x = sum_x
+    sum_headers = [
+        "Сумма (до УСН)",
+        f"УСН ({_fmt_money_no_dec(totals.get('usn_rate_percent', 0.0))}%)",
+        "Сумма с УСН",
+    ]
+    for i, w in enumerate(sum_cols):
+        rect_top(x, y, w, h_sum_head, fill_color=bg_muted, stroke_color=line)
+        if i == 0:
+            draw_text_left(x, y, h_sum_head, sum_headers[i], font_bold, f_tbl_h, colors.HexColor("#202020"), 6)
+        else:
+            draw_text_right(x, y, w, h_sum_head, sum_headers[i], font_bold, f_tbl_h, colors.HexColor("#202020"), 6)
+        x += w
+    y -= h_sum_head
+
+    sum_values = [
+        _fmt_money_no_dec(totals.get("expenses_before_usn", 0.0)),
+        _fmt_money_no_dec(totals.get("usn_amount", 0.0)),
+        _fmt_money_no_dec(totals.get("expenses_with_usn", 0.0)),
+    ]
+    x = sum_x
+    for i, w in enumerate(sum_cols):
+        rect_top(x, y, w, h_row, fill_color=colors.white, stroke_color=line)
+        draw_text_right(x, y, w, h_row, sum_values[i], font_bold, f_tbl, colors.black, 6)
+        x += w
+    y -= h_row
+
+    y -= h_after_totals
+
+    pay_w = exp_w * 0.50
+    pay_x = exp_x + (exp_w - pay_w) / 2
+    pay_cols = [pay_w * 0.60, pay_w * 0.40]
     rect_top(pay_x, y, pay_w, h_panel_h, fill_color=bg_header, stroke_color=bg_header)
     draw_text_left(pay_x, y, h_panel_h, "План по оплатам", font_bold, f_tbl_h, colors.white, 8)
     y -= h_panel_h
 
     x = pay_x
-    pay_headers = ["Дата оплаты", "Сумма", "Статус"]
+    pay_headers = ["Дата оплаты", "Сумма"]
     for i, w in enumerate(pay_cols):
         rect_top(x, y, w, h_head, fill_color=bg_muted, stroke_color=line)
         if i == 0:
             draw_text_center(x, y, w, h_head, pay_headers[i], font_bold, f_tbl_h, colors.HexColor("#202020"))
-        elif i == 1:
-            draw_text_right(x, y, w, h_head, pay_headers[i], font_bold, f_tbl_h, colors.HexColor("#202020"), 6)
         else:
-            draw_text_center(x, y, w, h_head, pay_headers[i], font_bold, f_tbl_h, colors.HexColor("#202020"))
+            draw_text_right(x, y, w, h_head, pay_headers[i], font_bold, f_tbl_h, colors.HexColor("#202020"), 6)
         x += w
     y -= h_head
 
-    payment_rows = payments or [{"pay_date": None, "amount": "", "status": "Нет оплат"}]
+    payment_rows = payments or [{"pay_date": None, "amount": ""}]
     for row in payment_rows:
         x = pay_x
         vals = [
             _fmt_date_long(row.get("pay_date")),
             _fmt_money_no_dec(row.get("amount")) if row.get("amount") not in {"", None} else "",
-            _fmt_plain(row.get("status")),
         ]
         for i, w in enumerate(pay_cols):
             rect_top(x, y, w, h_row, fill_color=colors.white, stroke_color=line)
             if i == 0:
                 draw_text_center(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black)
-            elif i == 1:
-                draw_text_right(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black, 6)
             else:
-                draw_text_center(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black)
+                draw_text_right(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black, 6)
             x += w
         y -= h_row
 
