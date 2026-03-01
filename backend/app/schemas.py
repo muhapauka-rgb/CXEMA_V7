@@ -68,6 +68,7 @@ class ContractorEstimateImportOut(BaseModel):
     ok: bool = True
     imported_blocks: int
     imported_items: int
+    created_parent_item_ids: List[int] = []
     profile: str = "generic"
     warnings: List[str] = []
 

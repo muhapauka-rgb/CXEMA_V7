@@ -837,6 +837,7 @@ async def import_contractor_estimate(
 
     imported_blocks = 0
     imported_items = 0
+    created_parent_item_ids: list[int] = []
     for block in parsed_blocks:
         parent = ExpenseItem(
             stable_item_id=gen_stable_id("item"),
@@ -855,6 +856,7 @@ async def import_contractor_estimate(
         )
         db.add(parent)
         db.flush()
+        created_parent_item_ids.append(int(parent.id))
         imported_blocks += 1
 
         for row in block["items"]:
@@ -907,6 +909,7 @@ async def import_contractor_estimate(
         "ok": True,
         "imported_blocks": imported_blocks,
         "imported_items": imported_items,
+        "created_parent_item_ids": created_parent_item_ids,
         "profile": profile,
         "warnings": warnings[:100],
     }

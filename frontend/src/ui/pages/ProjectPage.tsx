@@ -155,6 +155,7 @@ type ContractorEstimateImportOut = {
   ok: boolean
   imported_blocks: number
   imported_items: number
+  created_parent_item_ids: number[]
   profile: string
   warnings: string[]
 }
@@ -181,6 +182,11 @@ type ContractorEstimateBlockEdit = {
   items: number
   total: number
 }
+
+type ExpenseUndoAction =
+  | { kind: "create_item"; groupId: number; createdItemId: number }
+  | { kind: "delete_items"; groupId: number; deletedSnapshot: Item[] }
+  | { kind: "import_batch"; groupId: number; createdParentItemIds: number[] }
 
 type ItemFormState = {
   group_id: string
@@ -247,6 +253,15 @@ function ImportEstimateIcon() {
       <path d="M12 3v10" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
       <path d="M8 10.5 12 14.5l4-4" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M4 16.5v2A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5v-2" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function UndoIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M9 7H4v5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }
@@ -579,6 +594,8 @@ export default function ProjectPage() {
   const [itemDrafts, setItemDrafts] = useState<Record<number, ItemSheetDraft>>({})
   const [creatingInGroup, setCreatingInGroup] = useState<number | null>(null)
   const [importingEstimateGroupId, setImportingEstimateGroupId] = useState<number | null>(null)
+  const [undoingGroupId, setUndoingGroupId] = useState<number | null>(null)
+  const [groupUndoStacks, setGroupUndoStacks] = useState<Record<number, ExpenseUndoAction[]>>({})
   const [pendingEstimateImport, setPendingEstimateImport] = useState<{
     groupId: number
     file: File
@@ -962,7 +979,11 @@ export default function ProjectPage() {
     }
   }
 
-  async function createItemInGroup(groupId: number, preset?: { title?: string; parent_item_id?: number | null }) {
+  async function createItemInGroup(
+    groupId: number,
+    preset?: { title?: string; parent_item_id?: number | null },
+    options?: { skipUndo?: boolean },
+  ) {
     try {
       setError(null)
       setCreatingInGroup(groupId)
@@ -987,6 +1008,9 @@ export default function ProjectPage() {
         return next
       })
       setItemDrafts((prev) => ({ ...prev, [created.id]: itemToSheetDraft(created) }))
+      if (!options?.skipUndo) {
+        pushGroupUndoAction(groupId, { kind: "create_item", groupId, createdItemId: created.id })
+      }
     } catch (e) {
       setError(String(e))
     } finally {
@@ -1054,6 +1078,13 @@ export default function ProjectPage() {
       if (!res.ok) throw new Error(await res.text())
       const out = await res.json() as ContractorEstimateImportOut
       if (!out.ok) throw new Error("IMPORT_FAILED")
+      if (out.created_parent_item_ids?.length) {
+        pushGroupUndoAction(pendingEstimateImport.groupId, {
+          kind: "import_batch",
+          groupId: pendingEstimateImport.groupId,
+          createdParentItemIds: out.created_parent_item_ids,
+        })
+      }
       setPendingEstimateImport(null)
       await loadAll()
     } catch (e) {
@@ -1070,6 +1101,94 @@ export default function ProjectPage() {
 
   function openGroupEstimatePicker(groupId: number) {
     groupEstimateFileInputsRef.current[groupId]?.click()
+  }
+
+  function pushGroupUndoAction(groupId: number, action: ExpenseUndoAction) {
+    setGroupUndoStacks((prev) => {
+      const current = prev[groupId] || []
+      const next = [...current, action]
+      const trimmed = next.length > 5 ? next.slice(next.length - 5) : next
+      return { ...prev, [groupId]: trimmed }
+    })
+  }
+
+  function itemCreatePayloadFromSnapshot(item: Item, parentItemId: number | null): Record<string, unknown> {
+    return {
+      group_id: item.group_id,
+      parent_item_id: parentItemId,
+      title: item.title,
+      mode: item.mode,
+      qty: item.qty ?? null,
+      unit_price_base: item.unit_price_base ?? null,
+      base_total: Number(item.base_total || 0),
+      include_in_estimate: item.include_in_estimate,
+      extra_profit_enabled: item.extra_profit_enabled,
+      extra_profit_amount: Number(item.extra_profit_amount || 0),
+      discount_enabled: item.discount_enabled,
+      discount_amount: Number(item.discount_amount || 0),
+      planned_pay_date: item.planned_pay_date ?? null,
+    }
+  }
+
+  async function restoreDeletedItems(groupId: number, deletedSnapshot: Item[]) {
+    const ordered = [...deletedSnapshot].sort((a, b) => {
+      const aDepth = a.parent_item_id == null ? 0 : 1
+      const bDepth = b.parent_item_id == null ? 0 : 1
+      if (aDepth !== bDepth) return aDepth - bDepth
+      return a.id - b.id
+    })
+    const oldToNewId = new Map<number, number>()
+    for (const snapshotItem of ordered) {
+      const mappedParentId = snapshotItem.parent_item_id == null
+        ? null
+        : oldToNewId.get(Number(snapshotItem.parent_item_id)) ?? null
+      const created = await apiPost<Item>(
+        `/api/projects/${projectId}/items`,
+        itemCreatePayloadFromSnapshot(snapshotItem, mappedParentId),
+      )
+      oldToNewId.set(snapshotItem.id, created.id)
+    }
+    await loadAll()
+    const restoredTopLevelIds = ordered
+      .filter((it) => it.parent_item_id == null)
+      .map((it) => oldToNewId.get(it.id))
+      .filter((idNum): idNum is number => Number.isFinite(idNum))
+    if (restoredTopLevelIds.length > 0) {
+      pushGroupUndoAction(groupId, { kind: "import_batch", groupId, createdParentItemIds: restoredTopLevelIds })
+    }
+  }
+
+  async function undoLastExpenseAction(groupId: number) {
+    const stack = groupUndoStacks[groupId] || []
+    const action = stack.length ? stack[stack.length - 1] : null
+    if (!action) return
+    try {
+      setError(null)
+      setUndoingGroupId(groupId)
+      setGroupUndoStacks((prev) => {
+        const current = prev[groupId] || []
+        return { ...prev, [groupId]: current.slice(0, -1) }
+      })
+      if (action.kind === "create_item") {
+        await apiDelete(`/api/projects/${projectId}/items/${action.createdItemId}`)
+        await loadAll()
+        return
+      }
+      if (action.kind === "delete_items") {
+        await restoreDeletedItems(groupId, action.deletedSnapshot)
+        return
+      }
+      if (action.kind === "import_batch") {
+        for (const itemId of action.createdParentItemIds) {
+          await apiDelete(`/api/projects/${projectId}/items/${itemId}`)
+        }
+        await loadAll()
+      }
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setUndoingGroupId(null)
+    }
   }
 
 function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
@@ -1146,12 +1265,20 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
     }
   }
 
-  async function deleteItemRow(itemId: number) {
+  async function deleteItemRow(itemId: number, options?: { skipUndo?: boolean }) {
     try {
       setError(null)
-      const childIdsToDelete = new Set(
-        items.filter((it) => it.parent_item_id === itemId).map((it) => it.id),
-      )
+      const deletedRoot = items.find((it) => it.id === itemId) || null
+      if (!deletedRoot) return
+      const childItemsToDelete = items.filter((it) => it.parent_item_id === itemId)
+      const childIdsToDelete = new Set(childItemsToDelete.map((it) => it.id))
+      if (!options?.skipUndo) {
+        pushGroupUndoAction(deletedRoot.group_id, {
+          kind: "delete_items",
+          groupId: deletedRoot.group_id,
+          deletedSnapshot: [deletedRoot, ...childItemsToDelete],
+        })
+      }
       await apiDelete(`/api/projects/${projectId}/items/${itemId}`)
       if (selectedItemId === itemId) setSelectedItemId(null)
       setItems((prev) => prev.filter((it) => it.id !== itemId && it.parent_item_id !== itemId))
@@ -1250,6 +1377,10 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
   }, [id])
 
   useEffect(() => {
+    setGroupUndoStacks({})
+  }, [id])
+
+  useEffect(() => {
     const drafts: Record<number, PaymentDraft> = {}
     for (const p of planPayments) {
       drafts[p.id] = { pay_date: p.pay_date, amount: formatNumberValueForInput(p.amount), note: p.note || "" }
@@ -1330,6 +1461,23 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
       const same = Object.keys(next).length === Object.keys(prev).length
         && Object.keys(next).every((k) => prev[Number(k)] === true)
       return same ? prev : next
+    })
+  }, [groups])
+
+  useEffect(() => {
+    const validGroupIds = new Set(groups.map((g) => g.id))
+    setGroupUndoStacks((prev) => {
+      const next: Record<number, ExpenseUndoAction[]> = {}
+      let changed = false
+      Object.entries(prev).forEach(([key, value]) => {
+        const groupId = Number(key)
+        if (validGroupIds.has(groupId)) {
+          next[groupId] = value
+        } else {
+          changed = true
+        }
+      })
+      return changed ? next : prev
     })
   }, [groups])
 
@@ -1536,15 +1684,31 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                       className="btn icon-btn"
                       aria-label="Импорт сметы подрядчика"
                       title="Импорт сметы подрядчика"
-                      disabled={creatingInGroup === g.id || savingGroupId === g.id || deletingGroupId === g.id || importingEstimateGroupId === g.id}
+                      disabled={creatingInGroup === g.id || savingGroupId === g.id || deletingGroupId === g.id || importingEstimateGroupId === g.id || undoingGroupId === g.id}
                       onClick={() => openGroupEstimatePicker(g.id)}
                     >
                       <ImportEstimateIcon />
                     </button>
                     <button
                       className="btn icon-btn"
+                      aria-label="Отменить действие"
+                      title="Отменить последнее действие"
+                      disabled={
+                        creatingInGroup === g.id
+                        || savingGroupId === g.id
+                        || deletingGroupId === g.id
+                        || importingEstimateGroupId === g.id
+                        || undoingGroupId === g.id
+                        || (groupUndoStacks[g.id] || []).length === 0
+                      }
+                      onClick={() => void undoLastExpenseAction(g.id)}
+                    >
+                      <UndoIcon />
+                    </button>
+                    <button
+                      className="btn icon-btn"
                       aria-label="Удалить группу"
-                      disabled={creatingInGroup === g.id || savingGroupId === g.id || deletingGroupId === g.id || importingEstimateGroupId === g.id}
+                      disabled={creatingInGroup === g.id || savingGroupId === g.id || deletingGroupId === g.id || importingEstimateGroupId === g.id || undoingGroupId === g.id}
                       onClick={() => void deleteGroup(g)}
                     >
                       <TrashIcon />
