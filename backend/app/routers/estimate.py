@@ -191,6 +191,83 @@ def _resolve_drive_folder_id(drive_api: Any, project: Project) -> Optional[str]:
     return str(files[0].get("id") or "") or None
 
 
+def _escape_drive_query_value(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("'", "\\'")
+
+
+def _upload_or_replace_pdf_in_drive(
+    drive_api: Any,
+    folder_id: Optional[str],
+    file_name: str,
+    pdf_bytes: bytes,
+) -> Dict[str, Any]:
+    try:
+        from googleapiclient.http import MediaInMemoryUpload
+    except Exception as exc:
+        raise ValueError("GOOGLE_LIBRARIES_NOT_INSTALLED") from exc
+
+    safe_name = _escape_drive_query_value(file_name)
+    query = (
+        f"name='{safe_name}' and mimeType='application/pdf' and trashed=false"
+    )
+    if folder_id:
+        safe_folder = _escape_drive_query_value(folder_id)
+        query = f"'{safe_folder}' in parents and {query}"
+    else:
+        query = f"'root' in parents and {query}"
+
+    existing = drive_api.files().list(
+        q=query,
+        fields="files(id,name,parents,modifiedTime,webViewLink,webContentLink)",
+        orderBy="modifiedTime desc",
+        pageSize=1,
+        supportsAllDrives=True,
+        includeItemsFromAllDrives=True,
+    ).execute().get("files", [])
+
+    media = MediaInMemoryUpload(pdf_bytes, mimetype="application/pdf", resumable=False)
+    if existing:
+        target = existing[0]
+        file_id = target.get("id")
+        update_kwargs: Dict[str, Any] = {
+            "fileId": file_id,
+            "body": {"name": file_name},
+            "media_body": media,
+            "fields": "id,name,webViewLink,webContentLink,parents",
+            "supportsAllDrives": True,
+        }
+        if folder_id:
+            current_parents = [str(p) for p in (target.get("parents") or []) if p]
+            remove_parents = ",".join([p for p in current_parents if p != folder_id])
+            update_kwargs["addParents"] = folder_id
+            if remove_parents:
+                update_kwargs["removeParents"] = remove_parents
+        return drive_api.files().update(**update_kwargs).execute()
+
+    metadata: Dict[str, Any] = {
+        "name": file_name,
+        "mimeType": "application/pdf",
+    }
+    if folder_id:
+        metadata["parents"] = [folder_id]
+    return drive_api.files().create(
+        body=metadata,
+        media_body=media,
+        fields="id,name,webViewLink,webContentLink,parents",
+        supportsAllDrives=True,
+    ).execute()
+
+
+def _estimate_pdf_file_name(project_title: Optional[str]) -> str:
+    raw = str(project_title or "").strip()
+    parts = [p for p in re.split(r"\s+", raw) if p]
+    first_two = " ".join(parts[:2]).strip()
+    base = first_two or "Проект"
+    base = re.sub(r"[\\/:*?\"<>|]+", " ", base)
+    base = re.sub(r"\s+", " ", base).strip()
+    return f"Смета - {base}.pdf"
+
+
 def _project_or_404(db: Session, project_id: int) -> Project:
     project = db.get(Project, project_id)
     if not project:
@@ -1178,7 +1255,7 @@ def _render_estimate2_html(payload: dict[str, Any]) -> str:
       align-items:flex-start;
       justify-content:space-between;
       gap:10px;
-      margin-bottom:16px;
+      margin-bottom:32px;
     }}
     .h1 {{ margin:0; font-size:24px; font-weight:800; letter-spacing:-0.01em; }}
     .generated-at {{ color:var(--muted); font-size:13px; font-weight:500; margin-top:4px; white-space:nowrap; }}
@@ -1813,29 +1890,17 @@ def upload_estimate_to_drive(
 
         creds = _load_google_credentials(required=True)
         _, _, _, build = _import_google_deps()
-        try:
-            from googleapiclient.http import MediaInMemoryUpload
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail="GOOGLE_LIBRARIES_NOT_INSTALLED") from exc
 
         drive = build("drive", "v3", credentials=creds, cache_discovery=False)
         folder_id = _resolve_drive_folder_id(drive, project)
 
-        file_name = "Смета.pdf"
-        metadata: dict[str, Any] = {
-            "name": file_name,
-            "mimeType": "application/pdf",
-        }
-        if folder_id:
-            metadata["parents"] = [folder_id]
-
-        media = MediaInMemoryUpload(pdf_bytes, mimetype="application/pdf", resumable=False)
-        created = drive.files().create(
-            body=metadata,
-            media_body=media,
-            fields="id,name,webViewLink,webContentLink,parents",
-            supportsAllDrives=True,
-        ).execute()
+        file_name = _estimate_pdf_file_name(project.title)
+        created = _upload_or_replace_pdf_in_drive(
+            drive_api=drive,
+            folder_id=folder_id,
+            file_name=file_name,
+            pdf_bytes=pdf_bytes,
+        )
         return {
             "ok": True,
             "file_id": created.get("id"),
@@ -1878,29 +1943,17 @@ def upload_estimate2_to_drive(
 
         creds = _load_google_credentials(required=True)
         _, _, _, build = _import_google_deps()
-        try:
-            from googleapiclient.http import MediaInMemoryUpload
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail="GOOGLE_LIBRARIES_NOT_INSTALLED") from exc
 
         drive = build("drive", "v3", credentials=creds, cache_discovery=False)
         folder_id = _resolve_drive_folder_id(drive, project)
 
-        file_name = "Смета.pdf"
-        metadata: dict[str, Any] = {
-            "name": file_name,
-            "mimeType": "application/pdf",
-        }
-        if folder_id:
-            metadata["parents"] = [folder_id]
-
-        media = MediaInMemoryUpload(pdf_bytes, mimetype="application/pdf", resumable=False)
-        created = drive.files().create(
-            body=metadata,
-            media_body=media,
-            fields="id,name,webViewLink,webContentLink,parents",
-            supportsAllDrives=True,
-        ).execute()
+        file_name = _estimate_pdf_file_name(project.title)
+        created = _upload_or_replace_pdf_in_drive(
+            drive_api=drive,
+            folder_id=folder_id,
+            file_name=file_name,
+            pdf_bytes=pdf_bytes,
+        )
         return {
             "ok": True,
             "file_id": created.get("id"),

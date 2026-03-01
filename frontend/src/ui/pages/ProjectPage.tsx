@@ -508,6 +508,7 @@ export default function ProjectPage() {
   const [sheetPreview, setSheetPreview] = useState<SheetsPreview | null>(null)
   const [sheetPreviewToken, setSheetPreviewToken] = useState<string | null>(null)
   const [sheetsNotice, setSheetsNotice] = useState<string | null>(null)
+  const [oauthCheckStatus, setOauthCheckStatus] = useState<"ok" | "fail" | null>(null)
   const [googleAuth, setGoogleAuth] = useState<GoogleAuthStatus | null>(null)
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
@@ -758,8 +759,10 @@ export default function ProjectPage() {
     try {
       const auth = await apiGet<GoogleAuthStatus>(`/api/google/auth/status`)
       setGoogleAuth(auth)
+      setOauthCheckStatus(auth.connected ? "ok" : "fail")
+      setError(null)
     } catch (e) {
-      setError(String(e))
+      setOauthCheckStatus("fail")
     }
   }
 
@@ -1898,59 +1901,26 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
 
       {tab === "sheets" && (
         <div className="classic-layout">
-          <div className="panel">
-            <div className="h1">Google Sheets ({sheetStatus?.mode || "unknown"})</div>
-            {sheetStatus?.mode === "real" && (
-              <div className="panel" style={{ marginBottom: 12 }}>
-                <div className="muted">OAuth connected: {googleAuth?.connected ? "yes" : "no"}</div>
-                <div className="muted">client_secret: {googleAuth?.client_secret_configured ? "configured" : "missing"}</div>
-                <div className="muted">redirect_uri: {googleAuth?.redirect_uri || "—"}</div>
-                <div className="row">
-                  <button className="btn" onClick={() => void refreshGoogleAuthStatus()}>Проверить OAuth</button>
-                  <button
-                    className="btn"
-                    onClick={() => void (async () => {
-                      try {
-                        const start = await apiGet<GoogleAuthStart>(`/api/google/auth/start`)
-                        window.open(start.auth_url, "_blank", "noopener,noreferrer")
-                      } catch (e) {
-                        setError(String(e))
-                      }
-                    })()}
-                  >
-                    Подключить Google
-                  </button>
-                </div>
-              </div>
-            )}
-
-            <div className="muted">spreadsheet_id: {sheetStatus?.spreadsheet_id || "—"}</div>
-            <div className="muted">tab: {sheetStatus?.sheet_tab_name || "PROJECT"}</div>
-            <div className="muted">last_published_at: {sheetStatus?.last_published_at || "—"}</div>
-            <div className="muted">last_imported_at: {sheetStatus?.last_imported_at || "—"}</div>
-            <div className="muted">mock_file: {sheetStatus?.mock_file_path || "—"}</div>
-            {sheetStatus?.sheet_url && (
-              <div className="muted">
-                sheet_url: <a href={sheetStatus.sheet_url} target="_blank" rel="noreferrer">{sheetStatus.sheet_url}</a>
-              </div>
-            )}
-
-            <div className="row" style={{ marginTop: 10 }}>
+          <div className="panel sheets-panel sheets-panel-minimal">
+            <div className="sheets-links-row sheets-links-row-primary">
               <button
-                className="btn"
+                className="btn sheets-link-btn"
                 onClick={openEstimate2Page}
               >
-                Смета 2
+                Просмотр
               </button>
               <button
-                className="btn"
+                className="btn sheets-link-btn"
                 disabled={driveUpload2Busy}
                 onClick={() => void uploadEstimate2ToDrive()}
               >
-                {driveUpload2Busy ? "Отправка..." : "В Drive"}
+                {driveUpload2Busy ? "Отправка..." : "PDF"}
               </button>
+            </div>
+
+            <div className="sheets-links-row sheets-links-row-secondary">
               <button
-                className="btn"
+                className="btn sheets-link-btn"
                 disabled={!sheetsReady}
                 onClick={() => void (async () => {
                   try {
@@ -1976,7 +1946,7 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                 Публикация
               </button>
               <button
-                className="btn"
+                className="btn sheets-link-btn"
                 disabled={!sheetsReady}
                 onClick={() => void (async () => {
                   try {
@@ -1993,7 +1963,7 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                 Предпросмотр
               </button>
               <button
-                className="btn"
+                className="btn sheets-link-btn"
                 disabled={!sheetsReady || !sheetPreviewToken}
                 onClick={() => void (async () => {
                   try {
@@ -2012,13 +1982,40 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                 Применить
               </button>
             </div>
+
+            {sheetStatus?.mode === "real" && (
+              <div className="sheets-links-row sheets-links-row-oauth">
+                <button className="btn sheets-link-btn" onClick={() => void refreshGoogleAuthStatus()}>Проверить OAuth</button>
+                <button
+                  className="btn sheets-link-btn"
+                  onClick={() => void (async () => {
+                    try {
+                      const start = await apiGet<GoogleAuthStart>(`/api/google/auth/start`)
+                      window.open(start.auth_url, "_blank", "noopener,noreferrer")
+                    } catch (e) {
+                      setError(String(e))
+                    }
+                  })()}
+                >
+                  Подключить Google
+                </button>
+              </div>
+            )}
+            {sheetStatus?.mode === "real" && oauthCheckStatus && (
+              <div
+                className="muted sheets-oauth-status"
+                style={{ color: oauthCheckStatus === "ok" ? "#7adf9b" : "#ff9a9a" }}
+              >
+                {oauthCheckStatus === "ok" ? "OK" : "Fail"}
+              </div>
+            )}
+
             {sheetsNotice && (
-              <div className="muted" style={{ color: "#7adf9b", marginTop: 8 }}>
+              <div className="muted sheets-notice" style={{ color: "#7adf9b" }}>
                 {sheetsNotice}
               </div>
             )}
           </div>
-
         </div>
       )}
 

@@ -942,6 +942,63 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   gap: 8px;
 }
 
+.sheets-panel {
+  display: grid;
+  gap: 12px;
+  width: min(860px, 100%);
+  padding: 2px 8px 10px;
+}
+
+.sheets-panel-minimal {
+  gap: 10px;
+}
+
+.sheets-links-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 26px;
+}
+
+.sheets-links-row-primary {
+  margin-bottom: 72px;
+}
+
+.sheets-link-btn {
+  min-height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  justify-content: flex-start;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--muted);
+  opacity: 1;
+}
+
+.sheets-link-btn:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text);
+}
+
+.sheets-links-row-primary .sheets-link-btn {
+  color: var(--text);
+}
+
+.sheets-link-btn:disabled {
+  opacity: 0.4;
+}
+
+.sheets-oauth-status,
+.sheets-notice {
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
 .expense-sheet,
 .income-sheet {
   width: min(1120px, 100%);
@@ -1780,5 +1837,21 @@ html[data-theme="light"] .overview-table tbody td:last-child {
     position: static;
     top: auto;
     z-index: auto;
+  }
+
+  .sheets-panel {
+    width: 100%;
+  }
+
+  .sheets-links-row {
+    gap: 10px 14px;
+  }
+
+  .sheets-links-row-primary {
+    margin-bottom: 44px;
+  }
+
+  .sheets-link-btn {
+    font-size: 23px;
   }
 }
