@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import csv
+import io
+import re
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 from sqlalchemy import select, text, func, update
 
@@ -37,6 +40,8 @@ from ..schemas import (
     PaymentFactOut,
     ProjectComputed,
     ProjectReorderIn,
+    ContractorEstimateImportOut,
+    ContractorEstimatePreviewOut,
 )
 from ..utils import compute_project_financials, gen_stable_id
 
@@ -105,6 +110,355 @@ def _ensure_sqlite_columns() -> None:
 
 
 _ensure_sqlite_columns()
+
+_ROW_HEADER_HINTS = {
+    "статья",
+    "наименование",
+    "название",
+    "позиция",
+    "кол-во",
+    "количество",
+    "ед",
+    "ед.",
+    "цена",
+    "сумма",
+    "итого",
+}
+
+
+def _norm_text(value: object) -> str:
+    if value is None:
+        return ""
+    return re.sub(r"\s+", " ", str(value)).strip()
+
+
+def _parse_number(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    raw = _norm_text(value)
+    if not raw:
+        return None
+    # Ignore mixed text like "2 ой этаж" so digits inside labels are not parsed as amounts.
+    normalized = raw.replace("\u00A0", "").replace(" ", "").replace(",", ".")
+    if re.search(r"[A-Za-zА-Яа-я]", normalized):
+        return None
+    normalized = re.sub(r"[^0-9.\-]", "", normalized)
+    if not re.fullmatch(r"-?\d+(\.\d+)?", normalized):
+        return None
+    if not normalized:
+        return None
+    try:
+        return float(normalized)
+    except Exception:
+        return None
+
+
+def _load_table_rows_from_file(filename: str, content: bytes) -> list[list[object]]:
+    ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
+    if ext in {"xlsx", "xlsm", "xltx", "xltm"}:
+        try:
+            from openpyxl import load_workbook
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail="OPENPYXL_NOT_INSTALLED") from exc
+        wb = load_workbook(io.BytesIO(content), data_only=True, read_only=True)
+        ws = wb.active
+        out: list[list[object]] = []
+        for row in ws.iter_rows(values_only=True):
+            out.append(list(row))
+        return out
+
+    if ext in {"csv", "tsv", "txt"}:
+        text: str | None = None
+        for enc in ("utf-8-sig", "cp1251", "utf-8"):
+            try:
+                text = content.decode(enc)
+                break
+            except Exception:
+                continue
+        if text is None:
+            text = content.decode("latin-1", errors="ignore")
+        sample = "\n".join(text.splitlines()[:5])
+        delimiters = {";": sample.count(";"), ",": sample.count(","), "\t": sample.count("\t")}
+        delim = max(delimiters.items(), key=lambda kv: kv[1])[0] if delimiters else ";"
+        reader = csv.reader(io.StringIO(text), delimiter=delim)
+        return [list(r) for r in reader]
+
+    raise HTTPException(status_code=422, detail="UNSUPPORTED_ESTIMATE_FILE_FORMAT")
+
+
+def _parse_imported_estimate_rows(rows: list[list[object]], fallback_block_name: str) -> list[dict]:
+    blocks: list[dict] = []
+    current_block: dict | None = None
+
+    def ensure_block(name: str) -> dict:
+        nonlocal current_block
+        title = _norm_text(name) or fallback_block_name
+        if current_block and current_block["title"] == title:
+            return current_block
+        block = {"title": title, "items": [], "explicit_total": None}
+        blocks.append(block)
+        current_block = block
+        return block
+
+    for row in rows:
+        values = [v for v in row if _norm_text(v)]
+        if not values:
+            continue
+
+        text_cells = [_norm_text(v) for v in row if isinstance(v, str) and _norm_text(v)]
+        title = text_cells[0] if text_cells else ""
+        numbers = [_parse_number(v) for v in row]
+        nums = [n for n in numbers if n is not None]
+
+        title_lower = title.lower()
+        is_total_row = title_lower.startswith("итого") or title_lower.startswith("всего") or title_lower.startswith("total")
+        is_header_candidate = bool(title) and not nums
+        if is_header_candidate:
+            if any(token in title_lower for token in _ROW_HEADER_HINTS):
+                continue
+            ensure_block(title)
+            continue
+
+        block = current_block or ensure_block(fallback_block_name)
+        qty: float | None = None
+        unit: float | None = None
+        amount: float | None = None
+
+        if len(nums) >= 3:
+            qty, unit, amount = nums[-3], nums[-2], nums[-1]
+        elif len(nums) == 2:
+            first, second = nums
+            if abs(first - round(first)) < 1e-6 and 0 < first <= 200:
+                qty = first
+                amount = second
+            else:
+                unit = first
+                amount = second
+        elif len(nums) == 1:
+            amount = nums[0]
+
+        if amount is None and qty is not None and unit is not None:
+            amount = unit if qty == 0 else qty * unit
+
+        if is_total_row:
+            if amount is not None:
+                block["explicit_total"] = float(amount)
+            continue
+
+        item_title = title or f"Позиция {len(block['items']) + 1}"
+        if amount is None and qty is None and unit is None:
+            continue
+
+        block["items"].append(
+            {
+                "title": item_title,
+                "qty": None if qty is None else float(qty),
+                "unit": None if unit is None else float(unit),
+                "amount": None if amount is None else float(amount),
+            }
+        )
+
+    finalized: list[dict] = []
+    for block in blocks:
+        if not block["items"]:
+            continue
+        computed_total = sum(float(it["amount"] or 0.0) for it in block["items"])
+        explicit_total = block.get("explicit_total")
+        total = float(explicit_total) if explicit_total is not None else computed_total
+        finalized.append(
+            {
+                "title": block["title"],
+                "items": block["items"],
+                "total": max(0.0, float(total)),
+            }
+        )
+    return finalized
+
+
+def _detect_estimate_profile(rows: list[list[object]]) -> str:
+    joined = " ".join(
+        _norm_text(cell).lower()
+        for row in rows[:180]
+        for cell in row
+        if _norm_text(cell)
+    )
+    if "общая застройка по зонам" in joined:
+        return "zones_v1"
+    if "ценовое предложение выставочного стенда" in joined:
+        return "sections_v1"
+    if "итого по разделу" in joined:
+        return "sections_v1"
+    return "generic"
+
+
+def _parse_rows_zones_v1(rows: list[list[object]], fallback_block_name: str) -> tuple[list[dict], list[str]]:
+    blocks: list[dict] = []
+    warnings: list[str] = []
+    current_block: dict | None = None
+
+    def ensure_block(name: str) -> dict:
+        nonlocal current_block
+        title = _norm_text(name) or fallback_block_name
+        if current_block and current_block["title"] == title:
+            return current_block
+        block = {"title": title, "items": [], "explicit_total": None}
+        blocks.append(block)
+        current_block = block
+        return block
+
+    for row_idx, row in enumerate(rows, start=1):
+        text_cells = [_norm_text(v) for v in row if isinstance(v, str) and _norm_text(v)]
+        if not text_cells and not any(_parse_number(v) is not None for v in row):
+            continue
+        first_text = text_cells[0] if text_cells else ""
+        first_lower = first_text.lower()
+        if first_lower in _ROW_HEADER_HINTS or first_lower.startswith("наименование"):
+            continue
+
+        nums_raw = [_parse_number(v) for v in row]
+        nums = [n for n in nums_raw if n is not None]
+        is_total = first_lower.startswith("итого") or first_lower.startswith("всего")
+
+        if len(text_cells) == 1 and not nums and not is_total:
+            ensure_block(first_text)
+            continue
+
+        block = current_block or ensure_block(fallback_block_name)
+        if is_total:
+            if nums:
+                block["explicit_total"] = float(nums[-1])
+            continue
+
+        title = first_text or f"Позиция {len(block['items']) + 1}"
+        qty = unit = amount = None
+        if len(nums) >= 3:
+            qty, unit, amount = nums[-3], nums[-2], nums[-1]
+        elif len(nums) == 2:
+            qty, amount = nums[0], nums[1]
+        elif len(nums) == 1:
+            amount = nums[0]
+        if amount is None and qty is not None and unit is not None:
+            amount = unit if qty == 0 else qty * unit
+        if amount is None and qty is None and unit is None:
+            continue
+        block["items"].append({"title": title, "qty": qty, "unit": unit, "amount": amount})
+
+        if amount is None:
+            warnings.append(f"ROW_{row_idx}: SUM_MISSING")
+
+    finalized: list[dict] = []
+    for block in blocks:
+        if not block["items"]:
+            continue
+        computed_total = sum(float(it["amount"] or 0.0) for it in block["items"])
+        total = float(block["explicit_total"]) if block.get("explicit_total") is not None else computed_total
+        finalized.append({"title": block["title"], "items": block["items"], "total": max(0.0, total)})
+    return finalized, warnings
+
+
+def _is_section_row(first: str, second: str, nums: list[float]) -> bool:
+    if not second:
+        return False
+    if re.fullmatch(r"\d+(\.)?", first.strip()):
+        return True
+    if re.fullmatch(r"\d+(\.\d+)?", first.strip()) and len(nums) <= 1:
+        return True
+    return False
+
+
+def _parse_rows_sections_v1(rows: list[list[object]], fallback_block_name: str) -> tuple[list[dict], list[str]]:
+    blocks: list[dict] = []
+    warnings: list[str] = []
+    current_block: dict | None = None
+    table_started = False
+
+    def ensure_block(name: str) -> dict:
+        nonlocal current_block
+        title = _norm_text(name) or fallback_block_name
+        if current_block and current_block["title"] == title:
+            return current_block
+        block = {"title": title, "items": [], "explicit_total": None}
+        blocks.append(block)
+        current_block = block
+        return block
+
+    for row_idx, row in enumerate(rows, start=1):
+        cells = [_norm_text(v) for v in row]
+        text_cells = [c for c in cells if c]
+        if not text_cells and not any(_parse_number(v) is not None for v in row):
+            continue
+
+        first = text_cells[0] if text_cells else ""
+        second = text_cells[1] if len(text_cells) > 1 else ""
+        first_lower = first.lower()
+        row_joined = " ".join(text_cells).lower()
+        if not table_started:
+            if (
+                "наименование" in row_joined
+                and ("стоимость" in row_joined or "общая стоимость" in row_joined)
+            ):
+                table_started = True
+            continue
+        if first_lower in _ROW_HEADER_HINTS or first_lower.startswith("наименование"):
+            continue
+
+        nums_raw = [_parse_number(v) for v in row]
+        nums = [n for n in nums_raw if n is not None]
+        if _is_section_row(first, second, nums):
+            ensure_block(second)
+            continue
+
+        is_total = "итого по разделу" in first_lower or first_lower.startswith("итого") or first_lower.startswith("всего")
+        block = current_block or ensure_block(fallback_block_name)
+        if is_total:
+            if nums:
+                block["explicit_total"] = float(nums[-1])
+            continue
+
+        title = first
+        if re.fullmatch(r"\d+(\.)?", title) and second:
+            title = second
+        if not title:
+            title = f"Позиция {len(block['items']) + 1}"
+
+        qty = unit = amount = None
+        if len(nums) >= 3:
+            qty, unit, amount = nums[-3], nums[-2], nums[-1]
+        elif len(nums) == 2:
+            qty, amount = nums[0], nums[1]
+        elif len(nums) == 1:
+            amount = nums[0]
+        if amount is None and qty is not None and unit is not None:
+            amount = unit if qty == 0 else qty * unit
+        if amount is None and qty is None and unit is None:
+            continue
+        block["items"].append({"title": title, "qty": qty, "unit": unit, "amount": amount})
+
+        if amount is None:
+            warnings.append(f"ROW_{row_idx}: SUM_MISSING")
+
+    finalized: list[dict] = []
+    for block in blocks:
+        if not block["items"]:
+            continue
+        computed_total = sum(float(it["amount"] or 0.0) for it in block["items"])
+        total = float(block["explicit_total"]) if block.get("explicit_total") is not None else computed_total
+        finalized.append({"title": block["title"], "items": block["items"], "total": max(0.0, total)})
+    return finalized, warnings
+
+
+def _parse_contractor_estimate(rows: list[list[object]], fallback_name: str) -> tuple[str, list[dict], list[str]]:
+    profile = _detect_estimate_profile(rows)
+    warnings: list[str] = []
+    if profile == "zones_v1":
+        parsed_blocks, warnings = _parse_rows_zones_v1(rows, fallback_name)
+    elif profile == "sections_v1":
+        parsed_blocks, warnings = _parse_rows_sections_v1(rows, fallback_name)
+    else:
+        parsed_blocks = _parse_imported_estimate_rows(rows, fallback_name)
+    return profile, parsed_blocks, warnings
 
 def _get_project_or_404(db: Session, project_id: int) -> Project:
     p = db.get(Project, project_id)
@@ -352,6 +706,163 @@ def delete_group(project_id: int, group_id: int, db: Session = Depends(get_db)):
     db.delete(g)
     db.commit()
     return {"deleted": True}
+
+
+@router.post(
+    "/{project_id}/groups/{group_id}/contractor-estimate/preview",
+    response_model=ContractorEstimatePreviewOut,
+)
+async def preview_contractor_estimate(
+    project_id: int,
+    group_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    _get_project_or_404(db, project_id)
+    group = _get_group_or_404(db, project_id, group_id)
+
+    filename = _norm_text(file.filename or "")
+    if not filename:
+        raise HTTPException(422, "ESTIMATE_FILE_NAME_REQUIRED")
+    content = await file.read()
+    if not content:
+        raise HTTPException(422, "ESTIMATE_FILE_EMPTY")
+
+    table_rows = _load_table_rows_from_file(filename, content)
+    profile, parsed_blocks, warnings = _parse_contractor_estimate(
+        table_rows,
+        fallback_name=f"Импорт ({group.name})",
+    )
+    if not parsed_blocks:
+        raise HTTPException(422, "ESTIMATE_PARSE_EMPTY")
+
+    preview_blocks = []
+    total_items = 0
+    for block in parsed_blocks[:25]:
+        block_items = block.get("items") or []
+        total_items += len(block_items)
+        preview_blocks.append(
+            {
+                "title": str(block.get("title") or "Блок"),
+                "items": len(block_items),
+                "total": float(block.get("total") or 0.0),
+                "sample_rows": [str(it.get("title") or "") for it in block_items[:5]],
+            }
+        )
+    total_items = sum(len((b.get("items") or [])) for b in parsed_blocks)
+    return {
+        "ok": True,
+        "profile": profile,
+        "blocks": len(parsed_blocks),
+        "items": total_items,
+        "warnings": warnings[:100],
+        "preview_blocks": preview_blocks,
+    }
+
+
+@router.post(
+    "/{project_id}/groups/{group_id}/contractor-estimate/import",
+    response_model=ContractorEstimateImportOut,
+)
+async def import_contractor_estimate(
+    project_id: int,
+    group_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    _get_project_or_404(db, project_id)
+    group = _get_group_or_404(db, project_id, group_id)
+
+    filename = _norm_text(file.filename or "")
+    if not filename:
+        raise HTTPException(422, "ESTIMATE_FILE_NAME_REQUIRED")
+    content = await file.read()
+    if not content:
+        raise HTTPException(422, "ESTIMATE_FILE_EMPTY")
+
+    table_rows = _load_table_rows_from_file(filename, content)
+    profile, parsed_blocks, warnings = _parse_contractor_estimate(
+        table_rows,
+        fallback_name=f"Импорт ({group.name})",
+    )
+    if not parsed_blocks:
+        raise HTTPException(422, "ESTIMATE_PARSE_EMPTY")
+
+    imported_blocks = 0
+    imported_items = 0
+    for block in parsed_blocks:
+        parent = ExpenseItem(
+            stable_item_id=gen_stable_id("item"),
+            project_id=project_id,
+            group_id=group_id,
+            parent_item_id=None,
+            title=str(block["title"]),
+            mode=ItemMode.SINGLE_TOTAL,
+            qty=None,
+            unit_price_base=None,
+            base_total=float(block["total"]),
+            include_in_estimate=True,
+            extra_profit_enabled=False,
+            extra_profit_amount=0.0,
+            planned_pay_date=None,
+        )
+        db.add(parent)
+        db.flush()
+        imported_blocks += 1
+
+        for row in block["items"]:
+            qty = row.get("qty")
+            unit = row.get("unit")
+            amount = row.get("amount")
+            mode = ItemMode.SINGLE_TOTAL
+            base_total = float(amount or 0.0)
+            out_qty: float | None = None
+            out_unit: float | None = None
+
+            if qty is not None and unit is not None:
+                computed = float(unit) if float(qty) == 0 else float(qty) * float(unit)
+                if amount is None or abs(float(amount) - computed) <= 0.01:
+                    mode = ItemMode.QTY_PRICE
+                    out_qty = float(qty)
+                    out_unit = float(unit)
+                    base_total = computed
+                else:
+                    mode = ItemMode.SINGLE_TOTAL
+                    base_total = float(amount)
+            elif amount is not None:
+                mode = ItemMode.SINGLE_TOTAL
+                base_total = float(amount)
+            elif qty is not None and unit is None:
+                mode = ItemMode.SINGLE_TOTAL
+                base_total = float(qty)
+
+            child = ExpenseItem(
+                stable_item_id=gen_stable_id("item"),
+                project_id=project_id,
+                group_id=group_id,
+                parent_item_id=int(parent.id),
+                title=str(row.get("title") or "Позиция"),
+                mode=mode,
+                qty=out_qty,
+                unit_price_base=out_unit,
+                base_total=max(0.0, float(base_total)),
+                include_in_estimate=True,
+                extra_profit_enabled=False,
+                extra_profit_amount=0.0,
+                planned_pay_date=None,
+            )
+            _refresh_item_calculated_base(child)
+            db.add(child)
+            imported_items += 1
+
+    db.commit()
+    return {
+        "ok": True,
+        "imported_blocks": imported_blocks,
+        "imported_items": imported_items,
+        "profile": profile,
+        "warnings": warnings[:100],
+    }
 
 @router.get("/{project_id}/items", response_model=list[ItemOut])
 def list_items(project_id: int, db: Session = Depends(get_db)):

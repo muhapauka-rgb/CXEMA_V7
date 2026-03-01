@@ -63,6 +63,30 @@ class GroupCreate(BaseModel):
 class ProjectReorderIn(BaseModel):
     project_ids: List[int]
 
+
+class ContractorEstimateImportOut(BaseModel):
+    ok: bool = True
+    imported_blocks: int
+    imported_items: int
+    profile: str = "generic"
+    warnings: List[str] = []
+
+
+class ContractorEstimatePreviewBlockOut(BaseModel):
+    title: str
+    items: int
+    total: float
+    sample_rows: List[str] = []
+
+
+class ContractorEstimatePreviewOut(BaseModel):
+    ok: bool = True
+    profile: str
+    blocks: int
+    items: int
+    warnings: List[str] = []
+    preview_blocks: List[ContractorEstimatePreviewBlockOut] = []
+
 class GroupUpdate(BaseModel):
     name: Optional[str] = None
     sort_order: Optional[int] = None

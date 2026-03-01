@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useParams } from "react-router-dom"
 import { API_BASE, apiDelete, apiGet, apiPatch, apiPost } from "../api"
 import { openNativePicker } from "../datePicker"
@@ -151,6 +151,28 @@ type EstimateDriveUpload = {
   folder_id?: string | null
 }
 
+type ContractorEstimateImportOut = {
+  ok: boolean
+  imported_blocks: number
+  imported_items: number
+  profile: string
+  warnings: string[]
+}
+
+type ContractorEstimatePreviewOut = {
+  ok: boolean
+  profile: string
+  blocks: number
+  items: number
+  warnings: string[]
+  preview_blocks: Array<{
+    title: string
+    items: number
+    total: number
+    sample_rows: string[]
+  }>
+}
+
 type ItemFormState = {
   group_id: string
   title: string
@@ -206,6 +228,16 @@ function PlusIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.1" />
+    </svg>
+  )
+}
+
+function ImportEstimateIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 3v10" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+      <path d="M8 10.5 12 14.5l4-4" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4 16.5v2A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5v-2" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
     </svg>
   )
 }
@@ -537,6 +569,7 @@ export default function ProjectPage() {
   const [savingGroupId, setSavingGroupId] = useState<number | null>(null)
   const [itemDrafts, setItemDrafts] = useState<Record<number, ItemSheetDraft>>({})
   const [creatingInGroup, setCreatingInGroup] = useState<number | null>(null)
+  const [importingEstimateGroupId, setImportingEstimateGroupId] = useState<number | null>(null)
   const [savingItemId, setSavingItemId] = useState<number | null>(null)
   const [isCommonAgencyOpen, setIsCommonAgencyOpen] = useState(false)
   const [groupAgencyEnabled, setGroupAgencyEnabled] = useState<Record<number, boolean>>({})
@@ -552,6 +585,7 @@ export default function ProjectPage() {
 
   const [planDrafts, setPlanDrafts] = useState<Record<number, PaymentDraft>>({})
   const [factDrafts, setFactDrafts] = useState<Record<number, PaymentDraft>>({})
+  const groupEstimateFileInputsRef = useRef<Record<number, HTMLInputElement | null>>({})
 
   const selectedItem = useMemo(
     () => items.find((it) => it.id === selectedItemId) || null,
@@ -942,6 +976,55 @@ export default function ProjectPage() {
     } finally {
       setCreatingInGroup(null)
     }
+  }
+
+  async function importEstimateIntoGroup(groupId: number, file: File) {
+    if (!Number.isFinite(projectId)) return
+    try {
+      setError(null)
+      setImportingEstimateGroupId(groupId)
+      const previewForm = new FormData()
+      previewForm.append("file", file)
+      const previewRes = await fetch(`${API_BASE}/api/projects/${projectId}/groups/${groupId}/contractor-estimate/preview`, {
+        method: "POST",
+        body: previewForm,
+      })
+      if (!previewRes.ok) throw new Error(await previewRes.text())
+      const preview = await previewRes.json() as ContractorEstimatePreviewOut
+      if (!preview.ok) throw new Error("PREVIEW_FAILED")
+
+      const sample = preview.preview_blocks.slice(0, 4).map((b) => `- ${b.title} (${b.items})`).join("\n")
+      const warningPart = preview.warnings.length ? `\n\nПредупреждения: ${preview.warnings.length}` : ""
+      const confirmText = [
+        `Профиль: ${preview.profile}`,
+        `Блоков: ${preview.blocks}`,
+        `Строк: ${preview.items}`,
+        sample ? `\nПримеры блоков:\n${sample}` : "",
+        warningPart,
+        "\n\nИмпортировать в выбранную группу?",
+      ].join("")
+      const ok = window.confirm(confirmText)
+      if (!ok) return
+
+      const formData = new FormData()
+      formData.append("file", file)
+      const res = await fetch(`${API_BASE}/api/projects/${projectId}/groups/${groupId}/contractor-estimate/import`, {
+        method: "POST",
+        body: formData,
+      })
+      if (!res.ok) throw new Error(await res.text())
+      const out = await res.json() as ContractorEstimateImportOut
+      if (!out.ok) throw new Error("IMPORT_FAILED")
+      await loadAll()
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setImportingEstimateGroupId(null)
+    }
+  }
+
+  function openGroupEstimatePicker(groupId: number) {
+    groupEstimateFileInputsRef.current[groupId]?.click()
   }
 
 function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
@@ -1386,15 +1469,37 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                     <span>{toMoney(total)}</span>
                     <button
                       className="btn sheet-plus-btn"
-                      disabled={creatingInGroup === g.id || savingGroupId === g.id || deletingGroupId === g.id}
+                      disabled={creatingInGroup === g.id || savingGroupId === g.id || deletingGroupId === g.id || importingEstimateGroupId === g.id}
                       onClick={() => void createItemInGroup(g.id)}
                     >
                       +
                     </button>
+                    <input
+                      ref={(el) => { groupEstimateFileInputsRef.current[g.id] = el }}
+                      type="file"
+                      className="project-tile-file-input"
+                      accept=".xlsx,.xlsm,.xltx,.xltm,.csv,.tsv,.txt"
+                      onChange={(e) => {
+                        const selected = e.currentTarget.files?.[0]
+                        if (selected) {
+                          void importEstimateIntoGroup(g.id, selected)
+                        }
+                        e.currentTarget.value = ""
+                      }}
+                    />
+                    <button
+                      className="btn icon-btn"
+                      aria-label="Импорт сметы подрядчика"
+                      title="Импорт сметы подрядчика"
+                      disabled={creatingInGroup === g.id || savingGroupId === g.id || deletingGroupId === g.id || importingEstimateGroupId === g.id}
+                      onClick={() => openGroupEstimatePicker(g.id)}
+                    >
+                      <ImportEstimateIcon />
+                    </button>
                     <button
                       className="btn icon-btn"
                       aria-label="Удалить группу"
-                      disabled={creatingInGroup === g.id || savingGroupId === g.id || deletingGroupId === g.id}
+                      disabled={creatingInGroup === g.id || savingGroupId === g.id || deletingGroupId === g.id || importingEstimateGroupId === g.id}
                       onClick={() => void deleteGroup(g)}
                     >
                       <TrashIcon />
