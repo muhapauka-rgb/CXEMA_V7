@@ -375,7 +375,7 @@ export default function OverviewPage() {
   return (
     <>
     <div className={`grid ${createOpen ? "page-content-muted" : ""}`}>
-      <div className="sticky-stack">
+      <div className="overview-head-stack">
         <div className="overview-search-row">
           <div className="overview-search-wrap">
             <input

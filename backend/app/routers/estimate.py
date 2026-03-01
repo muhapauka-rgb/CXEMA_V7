@@ -901,6 +901,7 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
       background:#fff;
       font-family:"Roboto","Segoe UI",Arial,sans-serif !important;
     }}
+    .totals-strip .total {{ text-align:center; }}
     .total .k {{ color:var(--muted); font-size:11px; margin-bottom:2px; font-family:"Roboto","Segoe UI",Arial,sans-serif !important; }}
     .total .v {{ font-size:19px; font-weight:800; font-family:"Roboto","Segoe UI",Arial,sans-serif !important; }}
     .layout {{
@@ -1078,13 +1079,14 @@ def _render_estimate2_html(payload: dict[str, Any]) -> str:
     expense_rows: list[str] = []
     for group_idx, group in enumerate(expense_groups):
         group_name = escape(_fmt_plain(group.get("group_name")))
-        expense_rows.append(f'<tr class="group-title-row"><td colspan="4"><strong>{group_name}</strong></td></tr>')
+        expense_rows.append(f'<tr class="group-title-row"><td colspan="5"><strong>{group_name}</strong></td></tr>')
 
         rows = group.get("rows", [])
         if not rows:
-            expense_rows.append('<tr><td colspan="4" class="empty">Нет строк, отмеченных в смету</td></tr>')
+            expense_rows.append('<tr><td colspan="5" class="empty">Нет строк, отмеченных в смету</td></tr>')
 
-        for row in rows:
+        for row_idx, row in enumerate(rows, start=1):
+            row_no = escape(f"{group_idx + 1}.{row_idx}")
             title = escape(str(row["title"]))
             if row["is_subitem"]:
                 title = f'<span class="sub">↳ {title}</span>'
@@ -1094,6 +1096,7 @@ def _render_estimate2_html(payload: dict[str, Any]) -> str:
             expense_rows.append(
                 f"""
                 <tr>
+                  <td class="center">{row_no}</td>
                   <td>{title}</td>
                   <td class="center">{qty}</td>
                   <td class="num">{unit_price}</td>
@@ -1107,6 +1110,7 @@ def _render_estimate2_html(payload: dict[str, Any]) -> str:
             expense_rows.append(
                 f"""
                 <tr class="sum-row agency-row">
+                  <td></td>
                   <td><strong>Агентские ({agency_percent}%)</strong></td>
                   <td></td>
                   <td></td>
@@ -1118,6 +1122,7 @@ def _render_estimate2_html(payload: dict[str, Any]) -> str:
         expense_rows.append(
             f"""
             <tr class="sum-row">
+              <td></td>
               <td><strong>Итого</strong></td>
               <td></td>
               <td></td>
@@ -1126,12 +1131,13 @@ def _render_estimate2_html(payload: dict[str, Any]) -> str:
             """
         )
         if group_idx < len(expense_groups) - 1:
-            expense_rows.append('<tr class="group-gap"><td colspan="4"></td></tr>')
+            expense_rows.append('<tr class="group-gap"><td colspan="5"></td></tr>')
 
     if common_agency_amount > 0:
         expense_rows.append(
             f"""
             <tr class="sum-row agency-row">
+              <td></td>
               <td><strong>Агентские ({agency_percent}%)</strong></td>
               <td></td>
               <td></td>
@@ -1141,7 +1147,7 @@ def _render_estimate2_html(payload: dict[str, Any]) -> str:
         )
 
     if not expense_rows:
-        expense_rows.append('<tr><td colspan="4" class="empty">Нет строк, отмеченных в смету</td></tr>')
+        expense_rows.append('<tr><td colspan="5" class="empty">Нет строк, отмеченных в смету</td></tr>')
 
     project_title = escape(_fmt_plain(project["title"]))
     generated_at = escape(_fmt_generated_at(project.get("generated_at")))
@@ -1172,7 +1178,7 @@ def _render_estimate2_html(payload: dict[str, Any]) -> str:
       align-items:flex-start;
       justify-content:space-between;
       gap:10px;
-      margin-bottom:12px;
+      margin-bottom:16px;
     }}
     .h1 {{ margin:0; font-size:24px; font-weight:800; letter-spacing:-0.01em; }}
     .generated-at {{ color:var(--muted); font-size:13px; font-weight:500; margin-top:4px; white-space:nowrap; }}
@@ -1189,16 +1195,19 @@ def _render_estimate2_html(payload: dict[str, Any]) -> str:
       background:#fff;
       font-family:"Roboto","Segoe UI",Arial,sans-serif !important;
     }}
+    .totals-strip .total {{ text-align:center; }}
     .total .k {{ color:var(--muted); font-size:11px; margin-bottom:2px; font-family:"Roboto","Segoe UI",Arial,sans-serif !important; }}
     .total .v {{ font-size:19px; font-weight:800; font-family:"Roboto","Segoe UI",Arial,sans-serif !important; }}
     .stack {{ display:grid; gap:10px; }}
     .panel {{ border:1px solid var(--line); border-radius:0; background:#fff; overflow:hidden; }}
+    .expenses-panel {{ border-left:0; border-right:0; }}
     .panel-h {{ background:var(--head); color:var(--headText); padding:7px 10px; font-size:13px; font-weight:700; font-family:"Roboto","Segoe UI",Arial,sans-serif; }}
     table {{ width:100%; border-collapse:collapse; table-layout:fixed; font-family:"Roboto Mono","Consolas","Menlo","Monaco",monospace; }}
-    .expenses-table thead th:nth-child(1) {{ text-align:left; }}
-    .expenses-table thead th:nth-child(2) {{ text-align:center; }}
-    .expenses-table thead th:nth-child(3),
-    .expenses-table thead th:nth-child(4) {{ text-align:right; }}
+    .expenses-table thead th:nth-child(1) {{ text-align:center; }}
+    .expenses-table thead th:nth-child(2) {{ text-align:left; }}
+    .expenses-table thead th:nth-child(3) {{ text-align:center; }}
+    .expenses-table thead th:nth-child(4),
+    .expenses-table thead th:nth-child(5) {{ text-align:right; }}
     th, td {{ border:1px solid var(--line); padding:5px 6px; vertical-align:middle; }}
     th {{ background:#f0f0f0; color:#202020; font-size:11px; font-weight:700; text-align:center; line-height:1.15; }}
     td {{ background:#fff; }}
@@ -1225,10 +1234,12 @@ def _render_estimate2_html(payload: dict[str, Any]) -> str:
       background:var(--bg);
       line-height:0;
     }}
-    .sum-table th:nth-child(1), .sum-table td:nth-child(1) {{ text-align:left; }}
+    .sum-table th:nth-child(1), .sum-table td:nth-child(1),
     .sum-table th:nth-child(2), .sum-table td:nth-child(2),
     .sum-table th:nth-child(3), .sum-table td:nth-child(3) {{ text-align:right; }}
-    .payments-panel {{ width:50%; margin:0 auto; }}
+    .compact-panel {{ width:50%; margin-left:auto; margin-right:0; }}
+    .sum-panel {{ margin-top:24px; }}
+    .payments-panel {{ margin-top:24px; }}
     .payments-table {{ width:100%; margin:0; }}
     .payments-table th:nth-child(1), .payments-table td:nth-child(1) {{ text-align:center; }}
     .payments-table th:nth-child(2), .payments-table td:nth-child(2) {{ text-align:right; }}
@@ -1246,14 +1257,14 @@ def _render_estimate2_html(payload: dict[str, Any]) -> str:
       th, td {{ padding:3px 4px; font-size:10px; }}
       .panel {{ break-inside:avoid; page-break-inside:avoid; }}
       .group-gap td {{ height:16px; }}
-      .payments-panel {{ width:50%; }}
+      .compact-panel {{ width:50%; margin-left:auto; margin-right:0; }}
     }}
   </style>
 </head>
 <body>
   <div class="page">
     <div class="top-row">
-      <h1 class="h1">Смета проекта: {project_title}</h1>
+      <h1 class="h1">Проект: {project_title}</h1>
       <div class="generated-at">Сформировано: {generated_at}</div>
     </div>
 
@@ -1263,25 +1274,26 @@ def _render_estimate2_html(payload: dict[str, Any]) -> str:
     </div>
 
     <div class="stack">
-      <section class="panel">
+      <section class="panel expenses-panel">
         <div class="panel-h">Расходы</div>
         <table class="expenses-table">
           <thead>
             <tr>
-              <th style="width:53%">Статья</th>
+              <th style="width:8%">№</th>
+              <th style="width:45%">Статья</th>
               <th style="width:9%">Шт</th>
               <th style="width:19%">Цена за ед</th>
               <th style="width:19%">Сумма</th>
             </tr>
           </thead>
           <tbody>
-            <tr class="header-gap"><td colspan="4"></td></tr>
+            <tr class="header-gap"><td colspan="5"></td></tr>
             {''.join(expense_rows)}
           </tbody>
         </table>
       </section>
 
-      <section class="panel">
+      <section class="panel compact-panel sum-panel">
         <div class="panel-h">Сумма</div>
         <table class="sum-table">
           <thead>
@@ -1301,7 +1313,7 @@ def _render_estimate2_html(payload: dict[str, Any]) -> str:
         </table>
       </section>
 
-      <section class="panel payments-panel">
+      <section class="panel compact-panel payments-panel">
         <div class="panel-h">План по оплатам</div>
         <table class="payments-table">
           <thead>
@@ -1386,7 +1398,7 @@ def _render_estimate2_pdf(payload: dict[str, Any]) -> bytes:
     k = min(1.0, content_h / max(required_h, 1))
 
     h_title = row_h(18, k)
-    h_after_title = row_h(10, k)
+    h_after_title = row_h(16, k)
     h_card = row_h(30, k)
     h_after_cards = row_h(24, k)
     h_panel_h = row_h(18, k)
@@ -1394,10 +1406,10 @@ def _render_estimate2_pdf(payload: dict[str, Any]) -> bytes:
     h_header_gap = row_h(12, k)
     h_row = row_h(16, k)
     h_group_gap = row_h(20, k)
-    h_after_expenses = row_h(8, k)
+    h_after_expenses = row_h(24, k)
     h_sum_panel_h = row_h(18, k)
     h_sum_head = row_h(17, k)
-    h_after_totals = row_h(8, k)
+    h_after_totals = row_h(24, k)
 
     f_base = 10.0
     f_title = f_base + 1
@@ -1485,7 +1497,7 @@ def _render_estimate2_pdf(payload: dict[str, Any]) -> bytes:
     generated_at = _fmt_generated_at(project.get("generated_at"))
     c.setFillColor(colors.black)
     c.setFont(font_bold, f_title)
-    c.drawString(x0, y_top - f_title, f"Смета проекта: {project_title}")
+    c.drawString(x0, y_top - f_title, f"Проект: {project_title}")
     c.setFillColor(colors.HexColor("#555555"))
     c.setFont(font_regular, f_meta)
     c.drawRightString(x0 + content_w, y_top - f_meta, f"Сформировано: {generated_at}")
@@ -1501,26 +1513,30 @@ def _render_estimate2_pdf(payload: dict[str, Any]) -> bytes:
         rect_top(x, y, card_w, h_card, fill_color=colors.white, stroke_color=line)
         c.setFillColor(colors.HexColor("#555555"))
         c.setFont(font_regular, f_top_label)
-        c.drawString(x + 6, y - f_top_label - 5, label)
+        label_w = c.stringWidth(label, font_regular, f_top_label)
+        c.drawString(x + (card_w - label_w) / 2, y - f_top_label - 5, label)
         c.setFillColor(colors.black)
         c.setFont(font_bold, f_top_value)
-        c.drawString(x + 6, y - h_card + 6, value)
+        value_w = c.stringWidth(value, font_bold, f_top_value)
+        c.drawString(x + (card_w - value_w) / 2, y - h_card + 6, value)
     y -= h_card + h_after_cards
 
     exp_x = x0
     exp_w = content_w
-    exp_cols = [exp_w * 0.53, exp_w * 0.09, exp_w * 0.19, exp_w * 0.19]
+    exp_cols = [exp_w * 0.08, exp_w * 0.45, exp_w * 0.09, exp_w * 0.19, exp_w * 0.19]
     rect_top(exp_x, y, exp_w, h_panel_h, fill_color=bg_header, stroke_color=bg_header)
     draw_text_left(exp_x, y, h_panel_h, "Расходы", font_bold, f_tbl_h, colors.white, 8)
     y -= h_panel_h
 
     x = exp_x
-    headers = ["Статья", "Шт", "Цена за ед", "Сумма"]
+    headers = ["№", "Статья", "Шт", "Цена за ед", "Сумма"]
     for i, w in enumerate(exp_cols):
         rect_top(x, y, w, h_head, fill_color=bg_muted, stroke_color=line)
         if i == 0:
-            draw_text_left(x, y, h_head, headers[i], font_bold, f_tbl_h, colors.HexColor("#202020"), 6)
+            draw_text_center(x, y, w, h_head, headers[i], font_bold, f_tbl_h, colors.HexColor("#202020"))
         elif i == 1:
+            draw_text_left(x, y, h_head, headers[i], font_bold, f_tbl_h, colors.HexColor("#202020"), 6)
+        elif i == 2:
             draw_text_center(x, y, w, h_head, headers[i], font_bold, f_tbl_h, colors.HexColor("#202020"))
         else:
             draw_text_right(x, y, w, h_head, headers[i], font_bold, f_tbl_h, colors.HexColor("#202020"), 6)
@@ -1533,12 +1549,13 @@ def _render_estimate2_pdf(payload: dict[str, Any]) -> bytes:
         draw_text_left(exp_x, y, h_row, _fmt_plain(group.get("group_name")), font_bold, f_tbl, colors.white, 6)
         y -= h_row
 
-        for row in group.get("rows") or []:
+        for row_idx, row in enumerate(group.get("rows") or [], start=1):
             x = exp_x
             title = str(row.get("title") or "")
             if row.get("is_subitem"):
                 title = f"↳ {title}"
             vals = [
+                f"{idx + 1}.{row_idx}",
                 title,
                 "" if row.get("qty") is None else _fmt_money_no_dec(row.get("qty")),
                 "" if row.get("unit_price") is None else _fmt_money_no_dec(row.get("unit_price")),
@@ -1547,8 +1564,10 @@ def _render_estimate2_pdf(payload: dict[str, Any]) -> bytes:
             for i, w in enumerate(exp_cols):
                 rect_top(x, y, w, h_row, fill_color=colors.white, stroke_color=line)
                 if i == 0:
-                    draw_text_left(x, y, h_row, vals[i], font_table, f_tbl, colors.black, 6)
+                    draw_text_center(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black)
                 elif i == 1:
+                    draw_text_left(x, y, h_row, vals[i], font_table, f_tbl, colors.black, 6)
+                elif i == 2:
                     draw_text_center(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black)
                 else:
                     draw_text_right(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black, 6)
@@ -1558,12 +1577,14 @@ def _render_estimate2_pdf(payload: dict[str, Any]) -> bytes:
         agency_amount = _safe_num(group.get("agency_amount"))
         if agency_amount > 0:
             x = exp_x
-            vals = [f"Агентские ({agency_percent}%)", "", "", _fmt_money_no_dec(agency_amount)]
+            vals = ["", f"Агентские ({agency_percent}%)", "", "", _fmt_money_no_dec(agency_amount)]
             for i, w in enumerate(exp_cols):
                 rect_top(x, y, w, h_row, fill_color=bg_sum, stroke_color=line)
                 if i == 0:
-                    draw_text_left(x, y, h_row, vals[i], font_bold, f_tbl, colors.black, 6)
+                    draw_text_center(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black)
                 elif i == 1:
+                    draw_text_left(x, y, h_row, vals[i], font_bold, f_tbl, colors.black, 6)
+                elif i == 2:
                     draw_text_center(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black)
                 else:
                     draw_text_right(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black, 6)
@@ -1571,15 +1592,17 @@ def _render_estimate2_pdf(payload: dict[str, Any]) -> bytes:
             y -= h_row
 
         x = exp_x
-        vals = ["Итого", "", "", _fmt_money_no_dec(group.get("total_with_agency", 0.0))]
+        vals = ["", "Итого", "", "", _fmt_money_no_dec(group.get("total_with_agency", 0.0))]
         for i, w in enumerate(exp_cols):
             rect_top(x, y, w, h_row, fill_color=bg_sum, stroke_color=line)
             if i == 0:
-                draw_text_left(x, y, h_row, vals[i], font_bold, f_tbl, colors.black, 6)
+                draw_text_center(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black)
             elif i == 1:
+                draw_text_left(x, y, h_row, vals[i], font_bold, f_tbl, colors.black, 6)
+            elif i == 2:
                 draw_text_center(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black)
             else:
-                draw_text_right(x, y, w, h_row, vals[i], font_bold if i == 3 else font_table, f_tbl, colors.black, 6)
+                draw_text_right(x, y, w, h_row, vals[i], font_bold if i == 4 else font_table, f_tbl, colors.black, 6)
             x += w
         y -= h_row
 
@@ -1589,12 +1612,14 @@ def _render_estimate2_pdf(payload: dict[str, Any]) -> bytes:
     common_agency_amount = _safe_num(totals.get("common_agency_amount"))
     if common_agency_amount > 0:
         x = exp_x
-        vals = [f"Агентские ({agency_percent}%)", "", "", _fmt_money_no_dec(common_agency_amount)]
+        vals = ["", f"Агентские ({agency_percent}%)", "", "", _fmt_money_no_dec(common_agency_amount)]
         for i, w in enumerate(exp_cols):
             rect_top(x, y, w, h_row, fill_color=bg_sum, stroke_color=line)
             if i == 0:
-                draw_text_left(x, y, h_row, vals[i], font_bold, f_tbl, colors.black, 6)
+                draw_text_center(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black)
             elif i == 1:
+                draw_text_left(x, y, h_row, vals[i], font_bold, f_tbl, colors.black, 6)
+            elif i == 2:
                 draw_text_center(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black)
             else:
                 draw_text_right(x, y, w, h_row, vals[i], font_table, f_tbl, colors.black, 6)
@@ -1603,8 +1628,8 @@ def _render_estimate2_pdf(payload: dict[str, Any]) -> bytes:
 
     y -= h_after_expenses
 
-    sum_x = exp_x
-    sum_w = exp_w
+    sum_w = exp_w * 0.50
+    sum_x = exp_x + (exp_w - sum_w)
     sum_cols = [sum_w * 0.34, sum_w * 0.33, sum_w * 0.33]
     rect_top(sum_x, y, sum_w, h_sum_panel_h, fill_color=bg_header, stroke_color=bg_header)
     draw_text_left(sum_x, y, h_sum_panel_h, "Сумма", font_bold, f_tbl_h, colors.white, 8)
@@ -1640,7 +1665,7 @@ def _render_estimate2_pdf(payload: dict[str, Any]) -> bytes:
     y -= h_after_totals
 
     pay_w = exp_w * 0.50
-    pay_x = exp_x + (exp_w - pay_w) / 2
+    pay_x = exp_x + (exp_w - pay_w)
     pay_cols = [pay_w * 0.60, pay_w * 0.40]
     rect_top(pay_x, y, pay_w, h_panel_h, fill_color=bg_header, stroke_color=bg_header)
     draw_text_left(pay_x, y, h_panel_h, "План по оплатам", font_bold, f_tbl_h, colors.white, 8)
@@ -1675,6 +1700,36 @@ def _render_estimate2_pdf(payload: dict[str, Any]) -> bytes:
 
     c.save()
     return buf.getvalue()
+
+
+def _render_pdf_from_html(html: str) -> bytes:
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception as exc:
+        raise ValueError("BROWSER_PDF_NOT_INSTALLED") from exc
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                ],
+            )
+            context = browser.new_context(locale="ru-RU")
+            page = context.new_page()
+            page.set_content(html, wait_until="networkidle")
+            pdf_bytes = page.pdf(
+                format="A4",
+                print_background=True,
+                prefer_css_page_size=True,
+            )
+            context.close()
+            browser.close()
+            return pdf_bytes
+    except Exception as exc:
+        raise ValueError("BROWSER_PDF_RENDER_FAILED") from exc
 
 
 @router.get("/{project_id}/estimate/data")
@@ -1818,7 +1873,8 @@ def upload_estimate2_to_drive(
             group_agency_ids=_parse_group_ids(group_agency_ids),
             common_agency_enabled=bool(common_agency),
         )
-        pdf_bytes = _render_estimate2_pdf(payload)
+        html = _render_estimate2_html(payload)
+        pdf_bytes = _render_pdf_from_html(html)
 
         creds = _load_google_credentials(required=True)
         _, _, _, build = _import_google_deps()
@@ -1860,7 +1916,7 @@ def upload_estimate2_to_drive(
         status = 400
         if detail in {"GOOGLE_AUTH_REQUIRED", "GOOGLE_TOKEN_INVALID", "GOOGLE_TOKEN_REFRESH_FAILED"}:
             status = 401
-        if detail == "PDF_LIBRARIES_NOT_INSTALLED":
+        if detail in {"PDF_LIBRARIES_NOT_INSTALLED", "BROWSER_PDF_NOT_INSTALLED", "BROWSER_PDF_RENDER_FAILED"}:
             status = 500
         raise HTTPException(status_code=status, detail=detail) from exc
     except Exception as exc:

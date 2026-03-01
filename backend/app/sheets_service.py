@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import time
 from datetime import date, datetime
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -31,6 +33,8 @@ PREVIEW_CACHE_TTL_SECONDS = 30 * 60
 _PREVIEW_CACHE: Dict[int, Dict[str, Any]] = {}
 OAUTH_STATE_TTL_SECONDS = 10 * 60
 _OAUTH_STATE_CACHE: Dict[str, float] = {}
+_DRIVE_FOLDER_ID_RE = re.compile(r"/folders/([a-zA-Z0-9_-]+)")
+_DRIVE_ID_QUERY_RE = re.compile(r"[?&]id=([a-zA-Z0-9_-]+)")
 
 
 def _backend_root() -> Path:
@@ -93,9 +97,10 @@ def _ensure_link(db: Session, project_id: int) -> GoogleSheetLink:
     link = _link_for_project(db, project_id)
     if link:
         return link
+    default_spreadsheet_id = f"mock-sheet-{project_id}" if settings.SHEETS_MODE != "real" else ""
     link = GoogleSheetLink(
         project_id=project_id,
-        spreadsheet_id=f"mock-sheet-{project_id}",
+        spreadsheet_id=default_spreadsheet_id,
         sheet_tab_name="PROJECT",
     )
     db.add(link)
@@ -245,6 +250,96 @@ def _get_sheets_api_client() -> Any:
     creds = _load_google_credentials(required=True)
     _, _, _, build = _import_google_deps()
     return build("sheets", "v4", credentials=creds, cache_discovery=False)
+
+
+def _get_drive_api_client() -> Any:
+    creds = _load_google_credentials(required=True)
+    _, _, _, build = _import_google_deps()
+    return build("drive", "v3", credentials=creds, cache_discovery=False)
+
+
+def _extract_drive_folder_id(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+
+    folder_match = _DRIVE_FOLDER_ID_RE.search(raw)
+    if folder_match:
+        return folder_match.group(1)
+
+    query_match = _DRIVE_ID_QUERY_RE.search(raw)
+    if query_match:
+        return query_match.group(1)
+
+    if re.fullmatch(r"[a-zA-Z0-9_-]{10,}", raw):
+        return raw
+    return None
+
+
+def _resolve_drive_folder_id(drive_api: Any, project: Project) -> Optional[str]:
+    direct = _extract_drive_folder_id(project.google_drive_folder) or _extract_drive_folder_id(project.google_drive_url)
+    if direct:
+        return direct
+
+    folder_name = (project.google_drive_folder or "").strip()
+    if not folder_name:
+        return None
+    escaped_name = folder_name.replace("'", "''")
+    try:
+        out = drive_api.files().list(
+            q=(
+                "mimeType='application/vnd.google-apps.folder' "
+                f"and name='{escaped_name}' and trashed=false"
+            ),
+            fields="files(id,name)",
+            pageSize=1,
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+        ).execute()
+    except Exception:
+        return None
+    files = out.get("files", [])
+    if not files:
+        return None
+    return str(files[0].get("id") or "") or None
+
+
+def _move_sheet_to_project_folder(drive_api: Any, project: Project, spreadsheet_id: str) -> Optional[str]:
+    has_folder_target = bool((project.google_drive_url or "").strip() or (project.google_drive_folder or "").strip())
+    if not has_folder_target:
+        return None
+
+    folder_id = _resolve_drive_folder_id(drive_api, project)
+    if not folder_id:
+        raise ValueError("DRIVE_FOLDER_NOT_FOUND")
+
+    try:
+        file_meta = drive_api.files().get(
+            fileId=spreadsheet_id,
+            fields="id,parents",
+            supportsAllDrives=True,
+        ).execute()
+        current_parents = [str(p) for p in (file_meta.get("parents") or []) if p]
+        remove_parents = ",".join([p for p in current_parents if p != folder_id])
+        already_in_folder = folder_id in current_parents and not remove_parents
+        if not already_in_folder:
+            update_kwargs: Dict[str, Any] = {
+                "fileId": spreadsheet_id,
+                "addParents": folder_id,
+                "fields": "id,parents",
+                "supportsAllDrives": True,
+            }
+            if remove_parents:
+                update_kwargs["removeParents"] = remove_parents
+            drive_api.files().update(**update_kwargs).execute()
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError("DRIVE_MOVE_FAILED") from exc
+
+    return folder_id
 
 
 def _item_sheet_values(item: ExpenseItem, adjustment: Optional[ClientBillingAdjustment]) -> Dict[str, Any]:
@@ -410,6 +505,9 @@ def _read_real_snapshot(db: Session, project_id: int) -> Dict[str, Any]:
     link = _link_for_project(db, project_id)
     if not link or not link.spreadsheet_id:
         raise ValueError("SHEET_NOT_PUBLISHED")
+    if str(link.spreadsheet_id).startswith("mock-sheet-"):
+        # Legacy placeholder id from mock mode; require a real publish first.
+        raise ValueError("SHEET_NOT_PUBLISHED")
 
     sheets = _get_sheets_api_client().spreadsheets()
     tab_name = link.sheet_tab_name or "PROJECT"
@@ -427,7 +525,7 @@ def _build_real_sheet_rows(snapshot: Dict[str, Any], project_title: str, now_iso
         ["LAST_PUBLISHED_AT:", now_iso],
         ["INSTRUCTIONS:", "Редактируйте только qty/price/adjustment/reason и блок платежей."],
         [],
-        ["== ESTIMATE =="],
+        ["'== ESTIMATE =="],
         ["item_id", "group", "name", "qty", "unit_price_billable", "adjustment_type", "reason", "total_billable", "unit_price_full", "total_full", "delta"],
     ]
 
@@ -452,7 +550,7 @@ def _build_real_sheet_rows(snapshot: Dict[str, Any], project_title: str, now_iso
 
     rows.extend([[], []])
     payments_anchor_row = len(rows) + 1
-    rows.append(["== PAYMENTS_PLAN =="])
+    rows.append(["'== PAYMENTS_PLAN =="])
     rows.append(["pay_id", "date", "amount", "note"])
 
     payments_rows = snapshot.get("payments_plan_rows", [])
@@ -477,14 +575,671 @@ def _build_real_sheet_rows(snapshot: Dict[str, Any], project_title: str, now_iso
     }
 
 
+def _fmt_money_no_dec(value: Any) -> str:
+    try:
+        rounded = Decimal(str(value if value is not None else 0)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+        return f"{int(rounded):,}".replace(",", " ")
+    except Exception:
+        return f"{int(round(float(value or 0))):,}".replace(",", " ")
+
+
+def _fmt_date_long(value: Any) -> str:
+    if not value:
+        return "—"
+    months = [
+        "января",
+        "февраля",
+        "марта",
+        "апреля",
+        "мая",
+        "июня",
+        "июля",
+        "августа",
+        "сентября",
+        "октября",
+        "ноября",
+        "декабря",
+    ]
+    text = str(value).strip()
+    try:
+        dt = date.fromisoformat(text)
+    except Exception:
+        return text
+    return f"{dt.day} {months[dt.month - 1]} {dt.year}"
+
+
+def _fmt_generated_at(value: Any) -> str:
+    if not value:
+        return "—"
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return dt.strftime("%d.%m.%Y %H:%M")
+    except Exception:
+        return str(value)
+
+
+def _fetch_estimate2_payload(db: Session, project_id: int) -> Dict[str, Any]:
+    from .routers.estimate import _estimate_payload
+
+    return _estimate_payload(
+        db=db,
+        project_id=project_id,
+        group_agency_ids=set(),
+        common_agency_enabled=False,
+    )
+
+
+def _build_estimate2_view_layout(payload: Dict[str, Any]) -> Dict[str, Any]:
+    max_cols = 5
+    grid: Dict[int, List[Any]] = {}
+    spacer_rows: List[int] = []
+    group_gap_rows: List[int] = []
+
+    def _set(row: int, col: int, value: Any) -> None:
+        rec = grid.setdefault(row, [""] * max_cols)
+        rec[col - 1] = value
+
+    project = payload.get("project", {})
+    totals = payload.get("totals", {})
+    expense_groups = payload.get("expense_groups", [])
+    payments = payload.get("payments_plan", [])
+
+    _set(1, 1, f"Проект: {project.get('title', '')}")
+    _set(1, 4, f"Сформировано: {_fmt_generated_at(project.get('generated_at'))}")
+
+    _set(3, 1, "Стоимость проекта")
+    _set(4, 1, _fmt_money_no_dec(project.get("project_price_total")))
+    _set(3, 3, "Расходы на сегодня")
+    _set(4, 3, _fmt_money_no_dec(totals.get("expenses_today")))
+
+    _set(6, 1, "Расходы")
+    _set(7, 1, "№")
+    _set(7, 2, "Статья")
+    _set(7, 3, "Шт")
+    _set(7, 4, "Цена за ед")
+    _set(7, 5, "Сумма")
+
+    row = 8
+    expense_group_rows: List[int] = []
+    expense_total_rows: List[int] = []
+    expense_item_rows: List[int] = []
+    for group_idx, group in enumerate(expense_groups, start=1):
+        expense_group_rows.append(row)
+        _set(row, 1, str(group.get("group_name") or "—"))
+        row += 1
+
+        group_rows = group.get("rows") or []
+        if not group_rows:
+            _set(row, 2, "Нет строк, отмеченных в смету")
+            row += 1
+        else:
+            for item_idx, item in enumerate(group_rows, start=1):
+                expense_item_rows.append(row)
+                _set(row, 1, f"{group_idx}.{item_idx}")
+                title = str(item.get("title") or "")
+                if bool(item.get("is_subitem")):
+                    title = f"↳ {title}"
+                _set(row, 2, title)
+                qty = item.get("qty")
+                unit = item.get("unit_price")
+                _set(row, 3, "" if qty is None else _fmt_money_no_dec(qty))
+                _set(row, 4, "" if unit is None else _fmt_money_no_dec(unit))
+                _set(row, 5, _fmt_money_no_dec(item.get("sum")))
+                row += 1
+
+        expense_total_rows.append(row)
+        _set(row, 2, "Итого")
+        _set(row, 5, _fmt_money_no_dec(group.get("total_with_agency")))
+        row += 2
+        spacer_rows.append(row - 1)
+        group_gap_rows.append(row - 1)
+
+    if row == 8:
+        _set(row, 2, "Нет строк, отмеченных в смету")
+        row += 1
+
+    expense_end_row = row - 1
+    row += 1
+    spacer_rows.append(row - 1)
+    sum_header_row = row
+    _set(sum_header_row, 3, "Сумма")
+    sum_cols_row = sum_header_row + 1
+    _set(sum_cols_row, 3, "Сумма (до УСН)")
+    _set(sum_cols_row, 4, f"УСН ({_fmt_money_no_dec(totals.get('usn_rate_percent'))}%)")
+    _set(sum_cols_row, 5, "Сумма с УСН")
+    sum_vals_row = sum_header_row + 2
+    _set(sum_vals_row, 3, _fmt_money_no_dec(totals.get("expenses_before_usn")))
+    _set(sum_vals_row, 4, _fmt_money_no_dec(totals.get("usn_amount")))
+    _set(sum_vals_row, 5, _fmt_money_no_dec(totals.get("expenses_with_usn")))
+
+    payments_header_row = sum_vals_row + 3
+    spacer_rows.extend([sum_vals_row + 1, sum_vals_row + 2])
+    _set(payments_header_row, 3, "План по оплатам")
+    payments_cols_row = payments_header_row + 1
+    _set(payments_cols_row, 3, "Дата оплаты")
+    _set(payments_cols_row, 4, "Сумма")
+    payments_first_row = payments_cols_row + 1
+    if not payments:
+        _set(payments_first_row, 3, "Нет оплат")
+    else:
+        for idx, pay in enumerate(payments):
+            r = payments_first_row + idx
+            _set(r, 3, _fmt_date_long(pay.get("pay_date")))
+            _set(r, 4, _fmt_money_no_dec(pay.get("amount")))
+    payments_last_row = payments_first_row + max(len(payments), 1) - 1
+
+    max_row = max(grid.keys()) if grid else 1
+    rows: List[List[Any]] = [grid.get(i, [""] * max_cols) for i in range(1, max_row + 1)]
+    return {
+        "rows": rows,
+        "max_row": max_row,
+        "expense_header_row": 6,
+        "expense_table_header_row": 7,
+        "expense_end_row": max(7, expense_end_row),
+        "expense_group_rows": expense_group_rows,
+        "expense_total_rows": expense_total_rows,
+        "expense_item_rows": expense_item_rows,
+        "sum_header_row": sum_header_row,
+        "sum_cols_row": sum_cols_row,
+        "sum_vals_row": sum_vals_row,
+        "payments_header_row": payments_header_row,
+        "payments_cols_row": payments_cols_row,
+        "payments_first_row": payments_first_row,
+        "payments_last_row": payments_last_row,
+        "spacer_rows": spacer_rows,
+        "group_gap_rows": group_gap_rows,
+    }
+
+
+def _a1_range(tab_name: str, start_col: str, start_row: int, end_col: str, end_row: int) -> str:
+    return f"'{tab_name}'!{start_col}{start_row}:{end_col}{end_row}"
+
+
+def _range(sheet_id: int, sr: int, er: int, sc: int, ec: int) -> Dict[str, int]:
+    return {
+        "sheetId": sheet_id,
+        "startRowIndex": sr - 1,
+        "endRowIndex": er,
+        "startColumnIndex": sc - 1,
+        "endColumnIndex": ec,
+    }
+
+
+def _build_estimate2_view_style_requests(sheet_id: int, layout: Dict[str, Any]) -> List[Dict[str, Any]]:
+    max_row = int(layout["max_row"])
+    expense_table_header_row = int(layout["expense_table_header_row"])
+    expense_end_row = int(layout["expense_end_row"])
+    sum_header_row = int(layout["sum_header_row"])
+    sum_cols_row = int(layout["sum_cols_row"])
+    sum_vals_row = int(layout["sum_vals_row"])
+    payments_header_row = int(layout["payments_header_row"])
+    payments_cols_row = int(layout["payments_cols_row"])
+    payments_last_row = int(layout["payments_last_row"])
+    expense_group_rows = [int(v) for v in layout["expense_group_rows"]]
+    expense_total_rows = [int(v) for v in layout["expense_total_rows"]]
+    expense_item_rows = [int(v) for v in layout["expense_item_rows"]]
+    spacer_rows = [int(v) for v in layout.get("spacer_rows", [])]
+    group_gap_rows = [int(v) for v in layout.get("group_gap_rows", [])]
+
+    line = {"red": 0.81, "green": 0.81, "blue": 0.81}
+    dark = {"red": 0.0, "green": 0.0, "blue": 0.0}
+    white = {"red": 1.0, "green": 1.0, "blue": 1.0}
+    gray = {"red": 0.94, "green": 0.94, "blue": 0.94}
+    page_bg = {"red": 0.956, "green": 0.956, "blue": 0.956}
+
+    def _all_borders(color: Dict[str, float]) -> Dict[str, Any]:
+        edge = {"style": "SOLID", "color": color}
+        return {"top": edge, "bottom": edge, "left": edge, "right": edge}
+
+    req: List[Dict[str, Any]] = [
+        {
+            "updateDimensionProperties": {
+                "range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 5},
+                "properties": {"pixelSize": 110},
+                "fields": "pixelSize",
+            }
+        },
+        {
+            "updateDimensionProperties": {
+                "range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 1},
+                "properties": {"pixelSize": 72},
+                "fields": "pixelSize",
+            }
+        },
+        {
+            "updateDimensionProperties": {
+                "range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": 1, "endIndex": 2},
+                "properties": {"pixelSize": 395},
+                "fields": "pixelSize",
+            }
+        },
+        {
+            "updateDimensionProperties": {
+                "range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": 2, "endIndex": 3},
+                "properties": {"pixelSize": 90},
+                "fields": "pixelSize",
+            }
+        },
+        {
+            "updateDimensionProperties": {
+                "range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": 3, "endIndex": 5},
+                "properties": {"pixelSize": 165},
+                "fields": "pixelSize",
+            }
+        },
+        {
+            "updateDimensionProperties": {
+                "range": {"sheetId": sheet_id, "dimension": "ROWS", "startIndex": 0, "endIndex": max_row},
+                "properties": {"pixelSize": 28},
+                "fields": "pixelSize",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": _range(sheet_id, 1, max_row, 1, 5),
+                "cell": {"userEnteredFormat": {"backgroundColor": page_bg}},
+                "fields": "userEnteredFormat.backgroundColor",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": _range(sheet_id, 1, max_row, 1, 5),
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": white,
+                        "horizontalAlignment": "LEFT",
+                        "verticalAlignment": "MIDDLE",
+                        "textFormat": {"fontFamily": "Roboto Mono", "fontSize": 11},
+                    }
+                },
+                "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,textFormat)",
+            }
+        },
+        {"mergeCells": {"range": _range(sheet_id, 1, 1, 1, 3), "mergeType": "MERGE_ALL"}},
+        {"mergeCells": {"range": _range(sheet_id, 1, 1, 4, 5), "mergeType": "MERGE_ALL"}},
+        {"mergeCells": {"range": _range(sheet_id, 3, 3, 1, 2), "mergeType": "MERGE_ALL"}},
+        {"mergeCells": {"range": _range(sheet_id, 4, 4, 1, 2), "mergeType": "MERGE_ALL"}},
+        {"mergeCells": {"range": _range(sheet_id, 3, 3, 3, 4), "mergeType": "MERGE_ALL"}},
+        {"mergeCells": {"range": _range(sheet_id, 4, 4, 3, 4), "mergeType": "MERGE_ALL"}},
+        {"mergeCells": {"range": _range(sheet_id, 6, 6, 1, 5), "mergeType": "MERGE_ALL"}},
+        {"mergeCells": {"range": _range(sheet_id, sum_header_row, sum_header_row, 3, 5), "mergeType": "MERGE_ALL"}},
+        {"mergeCells": {"range": _range(sheet_id, payments_header_row, payments_header_row, 3, 4), "mergeType": "MERGE_ALL"}},
+        {
+            "repeatCell": {
+                "range": _range(sheet_id, 1, 1, 1, 3),
+                "cell": {"userEnteredFormat": {"textFormat": {"fontFamily": "Roboto", "fontSize": 24, "bold": True}}},
+                "fields": "userEnteredFormat.textFormat",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": _range(sheet_id, 1, 1, 4, 5),
+                "cell": {"userEnteredFormat": {"horizontalAlignment": "RIGHT", "textFormat": {"fontFamily": "Roboto", "fontSize": 12, "bold": True}}},
+                "fields": "userEnteredFormat(horizontalAlignment,textFormat)",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": _range(sheet_id, 3, 4, 1, 4),
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": white,
+                        "horizontalAlignment": "CENTER",
+                        "borders": _all_borders(line),
+                        "textFormat": {"fontFamily": "Roboto", "fontSize": 11},
+                    }
+                },
+                "fields": "userEnteredFormat(horizontalAlignment,borders,textFormat)",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": _range(sheet_id, 4, 4, 1, 4),
+                "cell": {"userEnteredFormat": {"textFormat": {"fontFamily": "Roboto", "fontSize": 22, "bold": True}}},
+                "fields": "userEnteredFormat.textFormat",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": _range(sheet_id, 6, 6, 1, 5),
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": dark,
+                        "textFormat": {"fontFamily": "Roboto", "fontSize": 16, "bold": True, "foregroundColor": white},
+                    }
+                },
+                "fields": "userEnteredFormat(backgroundColor,textFormat)",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": _range(sheet_id, expense_table_header_row, expense_table_header_row, 1, 5),
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": gray,
+                        "textFormat": {"fontFamily": "Roboto Mono", "fontSize": 12, "bold": True},
+                        "borders": _all_borders(line),
+                    }
+                },
+                "fields": "userEnteredFormat(backgroundColor,textFormat,borders)",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": _range(sheet_id, expense_table_header_row + 1, max(expense_table_header_row + 1, expense_end_row), 1, 5),
+                "cell": {"userEnteredFormat": {"backgroundColor": white, "borders": _all_borders(line)}},
+                "fields": "userEnteredFormat(backgroundColor,borders)",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": _range(sheet_id, sum_header_row, sum_header_row, 3, 5),
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": dark,
+                        "textFormat": {"fontFamily": "Roboto", "fontSize": 16, "bold": True, "foregroundColor": white},
+                    }
+                },
+                "fields": "userEnteredFormat(backgroundColor,textFormat)",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": _range(sheet_id, sum_cols_row, sum_cols_row, 3, 5),
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": white,
+                        "backgroundColor": gray,
+                        "horizontalAlignment": "RIGHT",
+                        "textFormat": {"fontFamily": "Roboto Mono", "fontSize": 12, "bold": True},
+                        "borders": _all_borders(line),
+                    }
+                },
+                "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,textFormat,borders)",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": _range(sheet_id, sum_vals_row, sum_vals_row, 3, 5),
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": white,
+                        "horizontalAlignment": "RIGHT",
+                        "textFormat": {"fontFamily": "Roboto Mono", "fontSize": 16, "bold": True},
+                        "borders": _all_borders(line),
+                    }
+                },
+                "fields": "userEnteredFormat(horizontalAlignment,textFormat,borders)",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": _range(sheet_id, payments_header_row, payments_header_row, 3, 4),
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": dark,
+                        "textFormat": {"fontFamily": "Roboto", "fontSize": 16, "bold": True, "foregroundColor": white},
+                    }
+                },
+                "fields": "userEnteredFormat(backgroundColor,textFormat)",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": _range(sheet_id, payments_cols_row, payments_cols_row, 3, 4),
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": gray,
+                        "textFormat": {"fontFamily": "Roboto Mono", "fontSize": 12, "bold": True},
+                        "borders": _all_borders(line),
+                    }
+                },
+                "fields": "userEnteredFormat(backgroundColor,textFormat,borders)",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": _range(sheet_id, payments_cols_row + 1, max(payments_cols_row + 1, payments_last_row), 3, 4),
+                "cell": {"userEnteredFormat": {"backgroundColor": white, "borders": _all_borders(line), "textFormat": {"fontFamily": "Roboto Mono", "fontSize": 15}}},
+                "fields": "userEnteredFormat(backgroundColor,borders,textFormat)",
+            }
+        },
+        {
+            "updateDimensionProperties": {
+                "range": {"sheetId": sheet_id, "dimension": "ROWS", "startIndex": 0, "endIndex": 1},
+                "properties": {"pixelSize": 48},
+                "fields": "pixelSize",
+            }
+        },
+        {
+            "updateDimensionProperties": {
+                "range": {"sheetId": sheet_id, "dimension": "ROWS", "startIndex": 2, "endIndex": 4},
+                "properties": {"pixelSize": 34},
+                "fields": "pixelSize",
+            }
+        },
+        {
+            "updateDimensionProperties": {
+                "range": {"sheetId": sheet_id, "dimension": "ROWS", "startIndex": 5, "endIndex": 7},
+                "properties": {"pixelSize": 36},
+                "fields": "pixelSize",
+            }
+        },
+    ]
+
+    for r in expense_group_rows:
+        req.append(
+            {
+                "mergeCells": {"range": _range(sheet_id, r, r, 1, 5), "mergeType": "MERGE_ALL"},
+            }
+        )
+        req.append(
+            {
+                "repeatCell": {
+                    "range": _range(sheet_id, r, r, 1, 5),
+                    "cell": {
+                        "userEnteredFormat": {
+                            "backgroundColor": dark,
+                            "textFormat": {"fontFamily": "Roboto", "fontSize": 16, "bold": True, "foregroundColor": white},
+                            "borders": _all_borders(line),
+                        }
+                    },
+                    "fields": "userEnteredFormat(backgroundColor,textFormat,borders)",
+                }
+            }
+        )
+
+    for r in spacer_rows:
+        req.append(
+            {
+                "repeatCell": {
+                    "range": _range(sheet_id, r, r, 1, 5),
+                    "cell": {
+                        "userEnteredFormat": {
+                            "backgroundColor": page_bg,
+                            "borders": _all_borders(page_bg),
+                        }
+                    },
+                    "fields": "userEnteredFormat(backgroundColor,borders)",
+                }
+            }
+        )
+
+    for r in group_gap_rows:
+        req.append(
+            {
+                "updateDimensionProperties": {
+                    "range": {"sheetId": sheet_id, "dimension": "ROWS", "startIndex": r - 1, "endIndex": r},
+                    "properties": {"pixelSize": 42},
+                    "fields": "pixelSize",
+                }
+            }
+        )
+
+    for r in expense_total_rows:
+        req.append(
+            {
+                "repeatCell": {
+                    "range": _range(sheet_id, r, r, 1, 5),
+                    "cell": {
+                        "userEnteredFormat": {
+                            "backgroundColor": {"red": 0.98, "green": 0.98, "blue": 0.98},
+                            "textFormat": {"fontFamily": "Roboto Mono", "fontSize": 12, "bold": True},
+                            "borders": _all_borders(line),
+                        }
+                    },
+                    "fields": "userEnteredFormat(backgroundColor,textFormat,borders)",
+                }
+            }
+        )
+
+    for r in expense_item_rows:
+        req.append(
+            {
+                "repeatCell": {
+                    "range": _range(sheet_id, r, r, 1, 1),
+                    "cell": {"userEnteredFormat": {"horizontalAlignment": "CENTER"}},
+                    "fields": "userEnteredFormat.horizontalAlignment",
+                }
+            }
+        )
+        req.append(
+            {
+                "repeatCell": {
+                    "range": _range(sheet_id, r, r, 3, 3),
+                    "cell": {"userEnteredFormat": {"horizontalAlignment": "CENTER"}},
+                    "fields": "userEnteredFormat.horizontalAlignment",
+                }
+            }
+        )
+        req.append(
+            {
+                "repeatCell": {
+                    "range": _range(sheet_id, r, r, 4, 5),
+                    "cell": {"userEnteredFormat": {"horizontalAlignment": "RIGHT"}},
+                    "fields": "userEnteredFormat.horizontalAlignment",
+                }
+            }
+        )
+
+    req.append(
+        {
+            "repeatCell": {
+                "range": _range(sheet_id, payments_cols_row + 1, max(payments_cols_row + 1, payments_last_row), 3, 3),
+                "cell": {"userEnteredFormat": {"horizontalAlignment": "CENTER"}},
+                "fields": "userEnteredFormat.horizontalAlignment",
+            }
+        }
+    )
+    req.append(
+        {
+            "repeatCell": {
+                "range": _range(sheet_id, payments_cols_row + 1, max(payments_cols_row + 1, payments_last_row), 4, 4),
+                "cell": {"userEnteredFormat": {"horizontalAlignment": "RIGHT", "textFormat": {"bold": True}}},
+                "fields": "userEnteredFormat(horizontalAlignment,textFormat.bold)",
+            }
+        }
+    )
+    req.append(
+        {
+            "updateDimensionProperties": {
+                "range": {"sheetId": sheet_id, "dimension": "ROWS", "startIndex": sum_header_row - 1, "endIndex": sum_header_row},
+                "properties": {"pixelSize": 44},
+                "fields": "pixelSize",
+            }
+        }
+    )
+    req.append(
+        {
+            "updateDimensionProperties": {
+                "range": {"sheetId": sheet_id, "dimension": "ROWS", "startIndex": payments_header_row - 1, "endIndex": payments_header_row},
+                "properties": {"pixelSize": 44},
+                "fields": "pixelSize",
+            }
+        }
+    )
+    return req
+
+
+def _ensure_sheet_by_title(
+    sheets_api: Any,
+    spreadsheet_id: str,
+    title: str,
+) -> int:
+    metadata = sheets_api.get(
+        spreadsheetId=spreadsheet_id,
+        fields="sheets(properties(sheetId,title,hidden))",
+    ).execute()
+    for sh in metadata.get("sheets", []):
+        props = sh.get("properties", {})
+        if props.get("title") == title:
+            return int(props.get("sheetId"))
+
+    updated = sheets_api.batchUpdate(
+        spreadsheetId=spreadsheet_id,
+        body={"requests": [{"addSheet": {"properties": {"title": title}}}]},
+    ).execute()
+    return int(updated["replies"][0]["addSheet"]["properties"]["sheetId"])
+
+
+def _recreate_sheet_by_title(
+    sheets_api: Any,
+    spreadsheet_id: str,
+    title: str,
+    index: int = 0,
+) -> int:
+    metadata = sheets_api.get(
+        spreadsheetId=spreadsheet_id,
+        fields="sheets(properties(sheetId,title,hidden))",
+    ).execute()
+    existing_id: Optional[int] = None
+    fallback_sheet_id: Optional[int] = None
+    visible_sheets = 0
+    for sh in metadata.get("sheets", []):
+        props = sh.get("properties", {})
+        sid = int(props.get("sheetId"))
+        is_hidden = bool(props.get("hidden", False))
+        if not is_hidden:
+            visible_sheets += 1
+        if props.get("title") == title:
+            existing_id = sid
+            continue
+        if fallback_sheet_id is None:
+            fallback_sheet_id = sid
+
+    requests: List[Dict[str, Any]] = []
+    if existing_id is not None:
+        if visible_sheets <= 1 and fallback_sheet_id is not None:
+            requests.append(
+                {
+                    "updateSheetProperties": {
+                        "properties": {"sheetId": fallback_sheet_id, "hidden": False},
+                        "fields": "hidden",
+                    }
+                }
+            )
+        requests.append({"deleteSheet": {"sheetId": existing_id}})
+    requests.append({"addSheet": {"properties": {"title": title, "index": index}}})
+    updated = sheets_api.batchUpdate(
+        spreadsheetId=spreadsheet_id,
+        body={"requests": requests},
+    ).execute()
+    replies = updated.get("replies", [])
+    add_reply = replies[-1] if replies else {}
+    return int(add_reply["addSheet"]["properties"]["sheetId"])
+
+
 def _ensure_real_spreadsheet_for_project(
     sheets_api: Any,
     project_title: str,
     spreadsheet_id: Optional[str],
 ) -> Tuple[str, int]:
     sheet_tab_name = "PROJECT"
+    sid = str(spreadsheet_id or "").strip()
+    if sid.startswith("mock-sheet-"):
+        sid = ""
 
-    if not spreadsheet_id:
+    if not sid:
         created = sheets_api.create(
             body={
                 "properties": {"title": f"Смета — {project_title}"},
@@ -492,16 +1247,16 @@ def _ensure_real_spreadsheet_for_project(
             },
             fields="spreadsheetId",
         ).execute()
-        spreadsheet_id = created["spreadsheetId"]
+        sid = created["spreadsheetId"]
 
-    metadata = sheets_api.get(spreadsheetId=spreadsheet_id).execute()
+    metadata = sheets_api.get(spreadsheetId=sid).execute()
     for sh in metadata.get("sheets", []):
         props = sh.get("properties", {})
         if props.get("title") == sheet_tab_name:
-            return spreadsheet_id, int(props.get("sheetId"))
+            return sid, int(props.get("sheetId"))
 
     updated = sheets_api.batchUpdate(
-        spreadsheetId=spreadsheet_id,
+        spreadsheetId=sid,
         body={
             "requests": [
                 {"addSheet": {"properties": {"title": sheet_tab_name}}}
@@ -509,7 +1264,7 @@ def _ensure_real_spreadsheet_for_project(
         },
     ).execute()
     new_sheet_id = int(updated["replies"][0]["addSheet"]["properties"]["sheetId"])
-    return spreadsheet_id, new_sheet_id
+    return sid, new_sheet_id
 
 
 def _publish_real(db: Session, project_id: int) -> Dict[str, Any]:
@@ -517,13 +1272,17 @@ def _publish_real(db: Session, project_id: int) -> Dict[str, Any]:
     link = _link_for_project(db, project_id)
 
     sheets_api = _get_sheets_api_client().spreadsheets()
+    drive_api = _get_drive_api_client()
     spreadsheet_id, sheet_id = _ensure_real_spreadsheet_for_project(
         sheets_api,
         project.title,
         link.spreadsheet_id if link else None,
     )
+    estimate2_view_sheet_id = _recreate_sheet_by_title(sheets_api, spreadsheet_id, "Смета 2", index=0)
 
     snapshot = _build_snapshot(db, project_id)
+    estimate2_payload = _fetch_estimate2_payload(db, project_id)
+    estimate2_layout = _build_estimate2_view_layout(estimate2_payload)
     now = datetime.utcnow()
     sheet_payload = _build_real_sheet_rows(snapshot, project.title, now.isoformat())
 
@@ -538,6 +1297,17 @@ def _publish_real(db: Session, project_id: int) -> Dict[str, Any]:
         range="PROJECT!A1",
         valueInputOption="USER_ENTERED",
         body={"values": sheet_payload["rows"]},
+    ).execute()
+    sheets_api.values().clear(
+        spreadsheetId=spreadsheet_id,
+        range=_a1_range("Смета 2", "A", 1, "E", 500),
+        body={},
+    ).execute()
+    sheets_api.values().update(
+        spreadsheetId=spreadsheet_id,
+        range=_a1_range("Смета 2", "A", 1, "E", int(estimate2_layout["max_row"])),
+        valueInputOption="USER_ENTERED",
+        body={"values": estimate2_layout["rows"]},
     ).execute()
 
     metadata = sheets_api.get(
@@ -604,11 +1374,8 @@ def _publish_real(db: Session, project_id: int) -> Dict[str, Any]:
             "addProtectedRange": {
                 "protectedRange": {
                     "range": {
+                        # Must cover the whole sheet when unprotectedRanges are used.
                         "sheetId": sheet_id,
-                        "startRowIndex": 0,
-                        "endRowIndex": 400,
-                        "startColumnIndex": 0,
-                        "endColumnIndex": 11,
                     },
                     "warningOnly": False,
                     "description": "PROJECT protected areas (RO + structure)",
@@ -632,11 +1399,29 @@ def _publish_real(db: Session, project_id: int) -> Dict[str, Any]:
             }
         }
     )
+    requests.append(
+        {
+            "updateSheetProperties": {
+                "properties": {"sheetId": estimate2_view_sheet_id, "index": 0, "hidden": False},
+                "fields": "index,hidden",
+            }
+        }
+    )
+    requests.append(
+        {
+            "updateSheetProperties": {
+                "properties": {"sheetId": sheet_id, "index": 1, "hidden": True},
+                "fields": "index,hidden",
+            }
+        }
+    )
+    requests.extend(_build_estimate2_view_style_requests(estimate2_view_sheet_id, estimate2_layout))
 
     sheets_api.batchUpdate(
         spreadsheetId=spreadsheet_id,
         body={"requests": requests},
     ).execute()
+    folder_id = _move_sheet_to_project_folder(drive_api, project, spreadsheet_id)
 
     if not link:
         link = GoogleSheetLink(
@@ -658,6 +1443,7 @@ def _publish_real(db: Session, project_id: int) -> Dict[str, Any]:
         "spreadsheet_id": spreadsheet_id,
         "sheet_url": _sheet_url(spreadsheet_id),
         "mock_file_path": None,
+        "folder_id": folder_id,
         "last_published_at": now,
         "estimate_rows": len(snapshot.get("estimate_rows", [])),
         "payments_plan_rows": len(snapshot.get("payments_plan_rows", [])),

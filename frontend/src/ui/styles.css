@@ -430,6 +430,19 @@ input[type="range"]::-moz-range-thumb {
   background: var(--bg);
 }
 
+.overview-head-stack {
+  display: grid;
+  gap: 4px;
+  background: var(--bg);
+}
+
+.overview-head-stack > .top-panel,
+.overview-head-stack > .top-panel-sticky {
+  position: static;
+  top: auto;
+  z-index: auto;
+}
+
 .sticky-stack > .top-panel,
 .sticky-stack > .top-panel-sticky {
   position: static;

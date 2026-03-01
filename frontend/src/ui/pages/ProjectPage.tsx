@@ -365,6 +365,40 @@ function toCalendarDateValue(raw: string): string {
   return parseFlexibleDate(raw) || ""
 }
 
+function formatSheetsActionError(err: unknown): string {
+  const raw = String(err || "")
+  let detail = raw
+  const m = raw.match(/\{[\s\S]*\}$/)
+  if (m) {
+    try {
+      const parsed = JSON.parse(m[0]) as { detail?: unknown }
+      if (typeof parsed.detail === "string" && parsed.detail.trim()) {
+        detail = parsed.detail
+      }
+    } catch {
+      // keep raw
+    }
+  }
+
+  if (detail.includes("SERVICE_DISABLED") || detail.includes("sheets.googleapis.com")) {
+    return "Google Sheets API выключен. Включи его в Google Cloud Console, подожди пару минут и повтори."
+  }
+  if (detail.includes("SHEET_NOT_PUBLISHED")) {
+    return "Сначала нажми «Публикация», чтобы создать или привязать таблицу."
+  }
+  if (detail.includes("PREVIEW_TOKEN_REQUIRED")) {
+    return "Сначала нажми «Предпросмотр», затем «Применить»."
+  }
+  if (
+    detail.includes("GOOGLE_AUTH_REQUIRED") ||
+    detail.includes("GOOGLE_TOKEN_INVALID") ||
+    detail.includes("GOOGLE_TOKEN_REFRESH_FAILED")
+  ) {
+    return "Google OAuth недействителен. Нажми «Подключить Google» и повтори."
+  }
+  return raw
+}
+
 function parsePhones(raw: string | null | undefined): string[] {
   if (!raw) return [""]
   const list = raw
@@ -473,12 +507,12 @@ export default function ProjectPage() {
   const [sheetStatus, setSheetStatus] = useState<SheetsStatus | null>(null)
   const [sheetPreview, setSheetPreview] = useState<SheetsPreview | null>(null)
   const [sheetPreviewToken, setSheetPreviewToken] = useState<string | null>(null)
+  const [sheetsNotice, setSheetsNotice] = useState<string | null>(null)
   const [googleAuth, setGoogleAuth] = useState<GoogleAuthStatus | null>(null)
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null)
-  const [driveUploadBusy, setDriveUploadBusy] = useState(false)
   const [driveUpload2Busy, setDriveUpload2Busy] = useState(false)
   const [projectPriceDraft, setProjectPriceDraft] = useState("0")
   const [savingProjectPrice, setSavingProjectPrice] = useState(false)
@@ -744,17 +778,7 @@ export default function ProjectPage() {
   }
 
   function openExternalPage(url: string) {
-    const popup = window.open(url, "_blank", "noopener,noreferrer")
-    if (popup) return
-    // Fallback for browsers/environments that block popups.
-    window.location.assign(url)
-  }
-
-  function openEstimatePage() {
-    if (!Number.isFinite(projectId)) return
-    const qs = buildEstimateQueryString()
-    const url = `${API_BASE}/api/projects/${projectId}/estimate/page${qs ? `?${qs}` : ""}`
-    openExternalPage(url)
+    window.open(url, "_blank", "noopener,noreferrer")
   }
 
   function openEstimate2Page() {
@@ -762,26 +786,6 @@ export default function ProjectPage() {
     const qs = buildEstimateQueryString()
     const url = `${API_BASE}/api/projects/${projectId}/estimate2/page${qs ? `?${qs}` : ""}`
     openExternalPage(url)
-  }
-
-  async function uploadEstimateToDrive() {
-    if (!Number.isFinite(projectId)) return
-    try {
-      setError(null)
-      setDriveUploadBusy(true)
-      const qs = buildEstimateQueryString()
-      const out = await apiPost<EstimateDriveUpload>(
-        `/api/projects/${projectId}/estimate/drive-upload${qs ? `?${qs}` : ""}`,
-        {},
-      )
-      if (out.web_view_link) {
-        openExternalPage(out.web_view_link)
-      }
-    } catch (e) {
-      setError(String(e))
-    } finally {
-      setDriveUploadBusy(false)
-    }
   }
 
   async function uploadEstimate2ToDrive() {
@@ -1280,7 +1284,7 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
         <div className="row tab-row">
           <button className={`btn ${tab === "expenses" ? "tab-active" : ""}`} onClick={() => setTab("expenses")}>Расходы</button>
           <button className={`btn ${tab === "payments" ? "tab-active" : ""}`} onClick={() => setTab("payments")}>Оплаты</button>
-          <button className={`btn ${tab === "sheets" ? "tab-active" : ""}`} onClick={() => setTab("sheets")}>Google Sheets</button>
+          <button className={`btn ${tab === "sheets" ? "tab-active" : ""}`} onClick={() => setTab("sheets")}>Сметы</button>
         </div>
       </div>
 
@@ -1902,7 +1906,7 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                 <div className="muted">client_secret: {googleAuth?.client_secret_configured ? "configured" : "missing"}</div>
                 <div className="muted">redirect_uri: {googleAuth?.redirect_uri || "—"}</div>
                 <div className="row">
-                  <button className="btn" onClick={() => void refreshGoogleAuthStatus()}>Refresh Auth</button>
+                  <button className="btn" onClick={() => void refreshGoogleAuthStatus()}>Проверить OAuth</button>
                   <button
                     className="btn"
                     onClick={() => void (async () => {
@@ -1914,7 +1918,7 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                       }
                     })()}
                   >
-                    Connect Google
+                    Подключить Google
                   </button>
                 </div>
               </div>
@@ -1934,29 +1938,16 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
             <div className="row" style={{ marginTop: 10 }}>
               <button
                 className="btn"
-                onClick={openEstimatePage}
-              >
-                Смета
-              </button>
-              <button
-                className="btn"
                 onClick={openEstimate2Page}
               >
                 Смета 2
               </button>
               <button
                 className="btn"
-                disabled={driveUploadBusy}
-                onClick={() => void uploadEstimateToDrive()}
-              >
-                {driveUploadBusy ? "Отправка..." : "Смета в Drive"}
-              </button>
-              <button
-                className="btn"
                 disabled={driveUpload2Busy}
                 onClick={() => void uploadEstimate2ToDrive()}
               >
-                {driveUpload2Busy ? "Отправка..." : "Смета 2 в Drive"}
+                {driveUpload2Busy ? "Отправка..." : "В Drive"}
               </button>
               <button
                 className="btn"
@@ -1966,6 +1957,8 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                     const out = await apiPost<SheetsPublish>(`/api/projects/${projectId}/sheets/publish`, {})
                     setSheetPreview(null)
                     setSheetPreviewToken(null)
+                    setError(null)
+                    setSheetsNotice(`Опубликовано: ${new Date(out.last_published_at).toLocaleString("ru-RU")}`)
                     setSheetStatus((prev) => ({
                       ...(prev || { mode: "mock" }),
                       spreadsheet_id: out.spreadsheet_id,
@@ -1975,11 +1968,12 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                     }))
                     await loadAll()
                   } catch (e) {
-                    setError(String(e))
+                    setSheetsNotice(null)
+                    setError(formatSheetsActionError(e))
                   }
                 })()}
               >
-                Publish
+                Публикация
               </button>
               <button
                 className="btn"
@@ -1987,14 +1981,16 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                 onClick={() => void (async () => {
                   try {
                     const preview = await apiPost<SheetsPreview>(`/api/projects/${projectId}/sheets/import/preview`, {})
+                    setError(null)
+                    setSheetsNotice(null)
                     setSheetPreview(preview)
                     setSheetPreviewToken(preview.preview_token)
                   } catch (e) {
-                    setError(String(e))
+                    setError(formatSheetsActionError(e))
                   }
                 })()}
               >
-                Import Preview
+                Предпросмотр
               </button>
               <button
                 className="btn"
@@ -2003,60 +1999,26 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                   try {
                     if (!sheetPreviewToken) throw new Error("PREVIEW_TOKEN_REQUIRED")
                     await apiPost<SheetsApply>(`/api/projects/${projectId}/sheets/import/apply`, { preview_token: sheetPreviewToken })
+                    setError(null)
+                    setSheetsNotice("Импорт применён")
                     setSheetPreview(null)
                     setSheetPreviewToken(null)
                     await loadAll()
                   } catch (e) {
-                    setError(String(e))
+                    setError(formatSheetsActionError(e))
                   }
                 })()}
               >
-                Import Apply
+                Применить
               </button>
             </div>
-          </div>
-
-          <div className="panel">
-            <div className="h1">Diff Preview</div>
-            {sheetPreview && (
-              <div className="grid">
-                <div className="muted">preview_token: {sheetPreview.preview_token}</div>
-                <div className="muted">items_updated: {sheetPreview.items_updated.length}</div>
-                <div className="muted">payments_updated: {sheetPreview.payments_updated.length}</div>
-                <div className="muted">payments_new: {sheetPreview.payments_new.length}</div>
-                <div className="muted">errors: {sheetPreview.errors.length}</div>
-
-                {sheetPreview.items_updated.map((row) => (
-                  <div className="project-tile" key={row.item_id}>
-                    <div className="project-tile-title">{row.title}</div>
-                    {Object.entries(row.changes).map(([key, change]) => (
-                      <div className="muted" key={`${row.item_id}-${key}`}>{key}: {String(change.from)} → {String(change.to)}</div>
-                    ))}
-                  </div>
-                ))}
-                {sheetPreview.payments_updated.map((row) => (
-                  <div className="project-tile" key={row.pay_id}>
-                    <div className="project-tile-title">Payment {row.pay_id}</div>
-                    {Object.entries(row.changes).map(([key, change]) => (
-                      <div className="muted" key={`${row.pay_id}-${key}`}>{key}: {String(change.from)} → {String(change.to)}</div>
-                    ))}
-                  </div>
-                ))}
-                {sheetPreview.payments_new.map((row, i) => (
-                  <div className="project-tile" key={`new-${i}`}>
-                    <div className="project-tile-title">Новый платёж</div>
-                    <div className="muted">{row.pay_date} • {toMoney(row.amount)}</div>
-                    <div className="muted">{row.note || "—"}</div>
-                  </div>
-                ))}
-                {sheetPreview.errors.map((e, i) => (
-                  <div className="project-tile" key={`err-${i}`}>
-                    <div className="muted" style={{ color: "#ff9a9a" }}>{e}</div>
-                  </div>
-                ))}
+            {sheetsNotice && (
+              <div className="muted" style={{ color: "#7adf9b", marginTop: 8 }}>
+                {sheetsNotice}
               </div>
             )}
           </div>
+
         </div>
       )}
 
