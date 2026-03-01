@@ -73,6 +73,7 @@ class ContractorEstimateImportOut(BaseModel):
 
 
 class ContractorEstimatePreviewBlockOut(BaseModel):
+    block_index: int
     title: str
     items: int
     total: float

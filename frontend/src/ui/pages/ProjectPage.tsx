@@ -166,11 +166,20 @@ type ContractorEstimatePreviewOut = {
   items: number
   warnings: string[]
   preview_blocks: Array<{
+    block_index: number
     title: string
     items: number
     total: number
     sample_rows: string[]
   }>
+}
+
+type ContractorEstimateBlockEdit = {
+  block_index: number
+  title: string
+  include: boolean
+  items: number
+  total: number
 }
 
 type ItemFormState = {
@@ -570,6 +579,13 @@ export default function ProjectPage() {
   const [itemDrafts, setItemDrafts] = useState<Record<number, ItemSheetDraft>>({})
   const [creatingInGroup, setCreatingInGroup] = useState<number | null>(null)
   const [importingEstimateGroupId, setImportingEstimateGroupId] = useState<number | null>(null)
+  const [pendingEstimateImport, setPendingEstimateImport] = useState<{
+    groupId: number
+    file: File
+    profile: string
+    warnings: string[]
+    blocks: ContractorEstimateBlockEdit[]
+  } | null>(null)
   const [savingItemId, setSavingItemId] = useState<number | null>(null)
   const [isCommonAgencyOpen, setIsCommonAgencyOpen] = useState(false)
   const [groupAgencyEnabled, setGroupAgencyEnabled] = useState<Record<number, boolean>>({})
@@ -992,35 +1008,64 @@ export default function ProjectPage() {
       if (!previewRes.ok) throw new Error(await previewRes.text())
       const preview = await previewRes.json() as ContractorEstimatePreviewOut
       if (!preview.ok) throw new Error("PREVIEW_FAILED")
+      const blocks: ContractorEstimateBlockEdit[] = preview.preview_blocks.map((block) => ({
+        block_index: block.block_index,
+        title: block.title,
+        include: true,
+        items: block.items,
+        total: block.total,
+      }))
+      setPendingEstimateImport({
+        groupId,
+        file,
+        profile: preview.profile,
+        warnings: preview.warnings,
+        blocks,
+      })
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setImportingEstimateGroupId(null)
+    }
+  }
 
-      const sample = preview.preview_blocks.slice(0, 4).map((b) => `- ${b.title} (${b.items})`).join("\n")
-      const warningPart = preview.warnings.length ? `\n\nПредупреждения: ${preview.warnings.length}` : ""
-      const confirmText = [
-        `Профиль: ${preview.profile}`,
-        `Блоков: ${preview.blocks}`,
-        `Строк: ${preview.items}`,
-        sample ? `\nПримеры блоков:\n${sample}` : "",
-        warningPart,
-        "\n\nИмпортировать в выбранную группу?",
-      ].join("")
-      const ok = window.confirm(confirmText)
-      if (!ok) return
-
+  async function applyPendingEstimateImport() {
+    if (!pendingEstimateImport) return
+    if (!Number.isFinite(projectId)) return
+    try {
+      setError(null)
+      setImportingEstimateGroupId(pendingEstimateImport.groupId)
       const formData = new FormData()
-      formData.append("file", file)
-      const res = await fetch(`${API_BASE}/api/projects/${projectId}/groups/${groupId}/contractor-estimate/import`, {
+      formData.append("file", pendingEstimateImport.file)
+      formData.append(
+        "overrides",
+        JSON.stringify(
+          pendingEstimateImport.blocks.map((block) => ({
+            block_index: block.block_index,
+            include: block.include,
+            title: block.title.trim(),
+          })),
+        ),
+      )
+      const res = await fetch(`${API_BASE}/api/projects/${projectId}/groups/${pendingEstimateImport.groupId}/contractor-estimate/import`, {
         method: "POST",
         body: formData,
       })
       if (!res.ok) throw new Error(await res.text())
       const out = await res.json() as ContractorEstimateImportOut
       if (!out.ok) throw new Error("IMPORT_FAILED")
+      setPendingEstimateImport(null)
       await loadAll()
     } catch (e) {
       setError(String(e))
     } finally {
       setImportingEstimateGroupId(null)
     }
+  }
+
+  function cancelPendingEstimateImport() {
+    if (importingEstimateGroupId != null) return
+    setPendingEstimateImport(null)
   }
 
   function openGroupEstimatePicker(groupId: number) {
@@ -2130,6 +2175,82 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
         </div>
       )}
     </div>
+    {pendingEstimateImport && (
+      <div className="modal-backdrop" onClick={cancelPendingEstimateImport}>
+        <div className="panel contractor-import-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="h1">Импорт сметы подрядчика</div>
+          <div className="muted">
+            Профиль: {pendingEstimateImport.profile} · Группа: {groupsMap.get(pendingEstimateImport.groupId)?.name || "Расходы"}
+          </div>
+          {!!pendingEstimateImport.warnings.length && (
+            <div className="muted" style={{ color: "#ff9a9a" }}>
+              Предупреждения: {pendingEstimateImport.warnings.slice(0, 3).join(" | ")}
+            </div>
+          )}
+
+          <div className="contractor-import-list">
+            <div className="contractor-import-head">
+              <span>Вкл</span>
+              <span>Название блока</span>
+              <span>Строк</span>
+              <span>Сумма</span>
+            </div>
+            {pendingEstimateImport.blocks.map((block, idx) => (
+              <div className="contractor-import-row" key={`${block.block_index}-${idx}`}>
+                <label className="contractor-import-check">
+                  <input
+                    type="checkbox"
+                    checked={block.include}
+                    onChange={(e) => {
+                      const checked = e.currentTarget.checked
+                      setPendingEstimateImport((prev) => {
+                        if (!prev) return prev
+                        const nextBlocks = prev.blocks.map((b) => (
+                          b.block_index === block.block_index ? { ...b, include: checked } : b
+                        ))
+                        return { ...prev, blocks: nextBlocks }
+                      })
+                    }}
+                  />
+                </label>
+                <input
+                  className="input contractor-import-title"
+                  value={block.title}
+                  onChange={(e) => {
+                    const nextTitle = e.target.value
+                    setPendingEstimateImport((prev) => {
+                      if (!prev) return prev
+                      const nextBlocks = prev.blocks.map((b) => (
+                        b.block_index === block.block_index ? { ...b, title: nextTitle } : b
+                      ))
+                      return { ...prev, blocks: nextBlocks }
+                    })
+                  }}
+                />
+                <span className="contractor-import-num">{block.items}</span>
+                <span className="contractor-import-num">{toMoneyInt(block.total)}</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="row contractor-import-actions">
+            <button className="btn" onClick={cancelPendingEstimateImport} disabled={importingEstimateGroupId != null}>
+              Отмена
+            </button>
+            <button
+              className="btn"
+              onClick={() => void applyPendingEstimateImport()}
+              disabled={
+                importingEstimateGroupId != null ||
+                pendingEstimateImport.blocks.filter((b) => b.include).length === 0
+              }
+            >
+              {importingEstimateGroupId != null ? "Импорт..." : "Импортировать"}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     {isSettingsOpen && (
       <div
         className="modal-backdrop"

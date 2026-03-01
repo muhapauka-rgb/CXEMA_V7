@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import re
 from datetime import date
+from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 from sqlalchemy import select, text, func, update
 
@@ -460,6 +462,46 @@ def _parse_contractor_estimate(rows: list[list[object]], fallback_name: str) -> 
         parsed_blocks = _parse_imported_estimate_rows(rows, fallback_name)
     return profile, parsed_blocks, warnings
 
+
+def _apply_block_overrides(parsed_blocks: list[dict], overrides_raw: Optional[str]) -> tuple[list[dict], list[str]]:
+    if not overrides_raw:
+        return parsed_blocks, []
+
+    warnings: list[str] = []
+    try:
+        payload = json.loads(overrides_raw)
+    except Exception:
+        return parsed_blocks, ["OVERRIDES_JSON_INVALID"]
+    if not isinstance(payload, list):
+        return parsed_blocks, ["OVERRIDES_FORMAT_INVALID"]
+
+    include_map: dict[int, bool] = {}
+    rename_map: dict[int, str] = {}
+    for entry in payload:
+        if not isinstance(entry, dict):
+            continue
+        raw_index = entry.get("block_index")
+        if not isinstance(raw_index, int):
+            continue
+        if raw_index < 0 or raw_index >= len(parsed_blocks):
+            warnings.append(f"OVERRIDE_INDEX_OUT_OF_RANGE:{raw_index}")
+            continue
+        if "include" in entry:
+            include_map[raw_index] = bool(entry.get("include"))
+        raw_title = _norm_text(entry.get("title"))
+        if raw_title:
+            rename_map[raw_index] = raw_title
+
+    filtered: list[dict] = []
+    for idx, block in enumerate(parsed_blocks):
+        if idx in include_map and not include_map[idx]:
+            continue
+        next_block = dict(block)
+        if idx in rename_map:
+            next_block["title"] = rename_map[idx]
+        filtered.append(next_block)
+    return filtered, warnings
+
 def _get_project_or_404(db: Session, project_id: int) -> Project:
     p = db.get(Project, project_id)
     if not p:
@@ -738,11 +780,12 @@ async def preview_contractor_estimate(
 
     preview_blocks = []
     total_items = 0
-    for block in parsed_blocks[:25]:
+    for idx, block in enumerate(parsed_blocks):
         block_items = block.get("items") or []
         total_items += len(block_items)
         preview_blocks.append(
             {
+                "block_index": idx,
                 "title": str(block.get("title") or "Блок"),
                 "items": len(block_items),
                 "total": float(block.get("total") or 0.0),
@@ -768,6 +811,7 @@ async def import_contractor_estimate(
     project_id: int,
     group_id: int,
     file: UploadFile = File(...),
+    overrides: Optional[str] = Form(default=None),
     db: Session = Depends(get_db),
 ):
     _get_project_or_404(db, project_id)
@@ -785,6 +829,9 @@ async def import_contractor_estimate(
         table_rows,
         fallback_name=f"Импорт ({group.name})",
     )
+    parsed_blocks, override_warnings = _apply_block_overrides(parsed_blocks, overrides)
+    if override_warnings:
+        warnings = [*warnings, *override_warnings]
     if not parsed_blocks:
         raise HTTPException(422, "ESTIMATE_PARSE_EMPTY")
 
