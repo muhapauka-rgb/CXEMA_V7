@@ -72,7 +72,7 @@ def snapshot(at: date = Query(..., description="YYYY-MM-DD"), db: Session = Depe
         r = received_to_date(db, p.id, at)
         pl = planned_to_date(db, p.id, at)
         expected = float(p.expected_from_client_total)
-        spent_base, _, discount_total = expense_breakdown_to_date(db, p.id, at)
+        spent_base, extra_from_expenses, discount_total = expense_breakdown_to_date(db, p.id, at)
         spent = float(spent_base)
         pocket_monthly = project_pocket_monthly_components(
             db,
@@ -82,7 +82,9 @@ def snapshot(at: date = Query(..., description="YYYY-MM-DD"), db: Session = Depe
             usn_rate_percent=usn_rate,
         )
         agency = sum(float(v.get("agency", 0.0)) for v in pocket_monthly.values())
-        ep = sum(float(v.get("extra", 0.0)) for v in pocket_monthly.values())
+        # "Доп прибыль" в overview должна совпадать с проектом: берем из строк расходов,
+        # а не из cash-flow выплат.
+        ep = float(extra_from_expenses)
         usn_paid = sum(float(v.get("tax", 0.0)) for v in pocket_monthly.values())
         usn_base = r if usn_mode == "LEGAL" else (spent + agency)
         usn_total = max(usn_paid, usn_amount_from_base(usn_base, usn_rate))
