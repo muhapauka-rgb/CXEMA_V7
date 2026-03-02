@@ -1533,7 +1533,6 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
               <div className="h1" style={{ marginBottom: 4 }}>{project.title}</div>
             </div>
             <div className="row">
-              <button className="btn" onClick={() => void loadAll()}>Обновить</button>
               <button className={`btn icon-btn ${isSettingsOpen ? "tab-active" : ""}`} onClick={() => setIsSettingsOpen((prev) => !prev)}>
                 <GearIcon />
               </button>
