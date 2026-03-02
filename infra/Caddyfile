@@ -1,5 +1,4 @@
-cxema-v7, cxema-v7.localhost {
-  tls internal
+http://cxema-v7, http://cxema-v7.localhost {
   encode gzip
 
   @api path /api/*

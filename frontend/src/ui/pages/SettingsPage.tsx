@@ -25,17 +25,12 @@ type AppSettings = {
   updated_at: string
 }
 
-const GOOGLE_LOGIN_KEY = "cxema_google_login"
-const GOOGLE_PASSWORD_KEY = "cxema_google_password"
-
 type SettingsPageProps = {
   asModal?: boolean
   onClose?: () => void
 }
 
 export default function SettingsPage({ asModal = false, onClose }: SettingsPageProps) {
-  const [googleLogin, setGoogleLogin] = useState("")
-  const [googlePassword, setGooglePassword] = useState("")
   const [status, setStatus] = useState<GoogleAuthStatus | null>(null)
   const [usnMode, setUsnMode] = useState<"LEGAL" | "OPERATIONAL">("OPERATIONAL")
   const [usnRateRaw, setUsnRateRaw] = useState("6")
@@ -46,10 +41,6 @@ export default function SettingsPage({ asModal = false, onClose }: SettingsPageP
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    const savedLogin = localStorage.getItem(GOOGLE_LOGIN_KEY) || ""
-    const savedPassword = localStorage.getItem(GOOGLE_PASSWORD_KEY) || ""
-    setGoogleLogin(savedLogin)
-    setGooglePassword(savedPassword)
     void loadAll()
   }, [])
 
@@ -87,12 +78,6 @@ export default function SettingsPage({ asModal = false, onClose }: SettingsPageP
     } catch (e) {
       setError(String(e))
     }
-  }
-
-  function saveGoogleCredentials() {
-    localStorage.setItem(GOOGLE_LOGIN_KEY, googleLogin.trim())
-    localStorage.setItem(GOOGLE_PASSWORD_KEY, googlePassword)
-    setMsg("Логин и пароль сохранены локально в браузере.")
   }
 
   async function saveTaxSettings() {
@@ -148,21 +133,7 @@ export default function SettingsPage({ asModal = false, onClose }: SettingsPageP
     <div className="settings-modal-layout">
       <section className="settings-section-block">
         <div className="settings-section-title">Google</div>
-        <input
-          className="input"
-          placeholder="Google login (email)"
-          value={googleLogin}
-          onChange={(e) => setGoogleLogin(e.target.value)}
-        />
-        <input
-          className="input"
-          type="password"
-          placeholder="Google password"
-          value={googlePassword}
-          onChange={(e) => setGooglePassword(e.target.value)}
-        />
         <div className="row settings-actions-row">
-          <button className="btn" onClick={saveGoogleCredentials}>Сохранить логин и пароль</button>
           <button className="btn" onClick={() => void refreshStatus()}>Проверить подключение</button>
           <button className="btn" onClick={() => void startOauth()}>Подключить Google (OAuth)</button>
         </div>

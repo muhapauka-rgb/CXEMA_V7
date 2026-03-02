@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import atexit
 from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
+import hashlib
 from html import escape
 from io import BytesIO
 import re
+import threading
+import time
 from typing import Any, Dict, Optional, Set
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -21,6 +25,13 @@ router = APIRouter(prefix="/api/projects", tags=["estimate"])
 
 _DRIVE_FOLDER_ID_RE = re.compile(r"/folders/([a-zA-Z0-9_-]+)")
 _DRIVE_ID_QUERY_RE = re.compile(r"[?&]id=([a-zA-Z0-9_-]+)")
+_PDF_BROWSER_LOCK = threading.Lock()
+_PDF_CACHE_LOCK = threading.Lock()
+_PLAYWRIGHT: Optional[Any] = None
+_PLAYWRIGHT_BROWSER: Optional[Any] = None
+_PDF_HTML_CACHE: Dict[str, tuple[float, bytes]] = {}
+_PDF_CACHE_TTL_SECONDS = 120.0
+_PDF_CACHE_MAX_ENTRIES = 24
 
 
 def _safe_num(value: Any) -> float:
@@ -1798,28 +1809,98 @@ def _render_pdf_from_html(html: str) -> bytes:
     except Exception as exc:
         raise ValueError("BROWSER_PDF_NOT_INSTALLED") from exc
 
+    cache_key = hashlib.sha256(html.encode("utf-8")).hexdigest()
+    cached = _pdf_cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                ],
-            )
-            context = browser.new_context(locale="ru-RU")
+        browser = _get_or_start_pdf_browser(sync_playwright)
+        context = browser.new_context(locale="ru-RU")
+        try:
             page = context.new_page()
-            page.set_content(html, wait_until="networkidle")
+            # "networkidle" is slow for pages with remote resources; DOM load is enough for our static layout.
+            page.set_content(html, wait_until="domcontentloaded")
             pdf_bytes = page.pdf(
                 format="A4",
                 print_background=True,
                 prefer_css_page_size=True,
             )
+        finally:
             context.close()
-            browser.close()
-            return pdf_bytes
+        _pdf_cache_put(cache_key, pdf_bytes)
+        return pdf_bytes
     except Exception as exc:
         raise ValueError("BROWSER_PDF_RENDER_FAILED") from exc
+
+
+def _get_or_start_pdf_browser(sync_playwright: Any) -> Any:
+    global _PLAYWRIGHT, _PLAYWRIGHT_BROWSER
+    with _PDF_BROWSER_LOCK:
+        try:
+            if _PLAYWRIGHT_BROWSER is not None and _PLAYWRIGHT_BROWSER.is_connected():
+                return _PLAYWRIGHT_BROWSER
+        except Exception:
+            _PLAYWRIGHT_BROWSER = None
+
+        if _PLAYWRIGHT is None:
+            _PLAYWRIGHT = sync_playwright().start()
+        _PLAYWRIGHT_BROWSER = _PLAYWRIGHT.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+            ],
+        )
+        return _PLAYWRIGHT_BROWSER
+
+
+def _pdf_cache_get(key: str) -> Optional[bytes]:
+    now = time.time()
+    with _PDF_CACHE_LOCK:
+        hit = _PDF_HTML_CACHE.get(key)
+        if not hit:
+            return None
+        ts, payload = hit
+        if now - ts > _PDF_CACHE_TTL_SECONDS:
+            _PDF_HTML_CACHE.pop(key, None)
+            return None
+        return payload
+
+
+def _pdf_cache_put(key: str, payload: bytes) -> None:
+    now = time.time()
+    with _PDF_CACHE_LOCK:
+        _PDF_HTML_CACHE[key] = (now, payload)
+        expired = [k for k, (ts, _) in _PDF_HTML_CACHE.items() if now - ts > _PDF_CACHE_TTL_SECONDS]
+        for k in expired:
+            _PDF_HTML_CACHE.pop(k, None)
+        if len(_PDF_HTML_CACHE) <= _PDF_CACHE_MAX_ENTRIES:
+            return
+        # Remove oldest entries first.
+        ordered = sorted(_PDF_HTML_CACHE.items(), key=lambda item: item[1][0])
+        for k, _ in ordered[: len(_PDF_HTML_CACHE) - _PDF_CACHE_MAX_ENTRIES]:
+            _PDF_HTML_CACHE.pop(k, None)
+
+
+def _shutdown_pdf_renderer() -> None:
+    global _PLAYWRIGHT, _PLAYWRIGHT_BROWSER
+    with _PDF_BROWSER_LOCK:
+        try:
+            if _PLAYWRIGHT_BROWSER is not None:
+                _PLAYWRIGHT_BROWSER.close()
+        except Exception:
+            pass
+        try:
+            if _PLAYWRIGHT is not None:
+                _PLAYWRIGHT.stop()
+        except Exception:
+            pass
+        _PLAYWRIGHT_BROWSER = None
+        _PLAYWRIGHT = None
+
+
+atexit.register(_shutdown_pdf_renderer)
 
 
 @router.get("/{project_id}/estimate/data")
