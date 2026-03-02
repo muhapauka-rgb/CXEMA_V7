@@ -9,7 +9,8 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
-from sqlalchemy import select, text, func, update
+from sqlalchemy import delete, select, text, func, update
+from sqlalchemy.exc import SQLAlchemyError
 
 from ..db import get_db, engine, Base
 from ..models import (
@@ -127,6 +128,17 @@ _ROW_HEADER_HINTS = {
     "итого",
 }
 
+_AGGREGATE_ROW_HINTS = (
+    "итого",
+    "всего",
+    "сумма",
+    "subtotal",
+    "total",
+    "ндс",
+    "налог",
+    "налоги",
+)
+
 
 def _norm_text(value: object) -> str:
     if value is None:
@@ -155,6 +167,13 @@ def _parse_number(value: object) -> float | None:
         return float(normalized)
     except Exception:
         return None
+
+
+def _is_aggregate_or_tax_row_label(label: str) -> bool:
+    text = _norm_text(label).lower()
+    if not text:
+        return False
+    return any(token in text for token in _AGGREGATE_ROW_HINTS)
 
 
 def _load_table_rows_from_file(filename: str, content: bytes) -> list[list[object]]:
@@ -216,6 +235,8 @@ def _parse_imported_estimate_rows(rows: list[list[object]], fallback_block_name:
 
         title_lower = title.lower()
         is_total_row = title_lower.startswith("итого") or title_lower.startswith("всего") or title_lower.startswith("total")
+        if title and _is_aggregate_or_tax_row_label(title):
+            continue
         is_header_candidate = bool(title) and not nums
         if is_header_candidate:
             if any(token in title_lower for token in _ROW_HEADER_HINTS):
@@ -267,13 +288,11 @@ def _parse_imported_estimate_rows(rows: list[list[object]], fallback_block_name:
         if not block["items"]:
             continue
         computed_total = sum(float(it["amount"] or 0.0) for it in block["items"])
-        explicit_total = block.get("explicit_total")
-        total = float(explicit_total) if explicit_total is not None else computed_total
         finalized.append(
             {
                 "title": block["title"],
                 "items": block["items"],
-                "total": max(0.0, float(total)),
+                "total": max(0.0, float(computed_total)),
             }
         )
     return finalized
@@ -318,6 +337,8 @@ def _parse_rows_zones_v1(rows: list[list[object]], fallback_block_name: str) -> 
         first_lower = first_text.lower()
         if first_lower in _ROW_HEADER_HINTS or first_lower.startswith("наименование"):
             continue
+        if first_text and _is_aggregate_or_tax_row_label(first_text):
+            continue
 
         nums_raw = [_parse_number(v) for v in row]
         nums = [n for n in nums_raw if n is not None]
@@ -355,8 +376,10 @@ def _parse_rows_zones_v1(rows: list[list[object]], fallback_block_name: str) -> 
         if not block["items"]:
             continue
         computed_total = sum(float(it["amount"] or 0.0) for it in block["items"])
-        total = float(block["explicit_total"]) if block.get("explicit_total") is not None else computed_total
-        finalized.append({"title": block["title"], "items": block["items"], "total": max(0.0, total)})
+        explicit_total = block.get("explicit_total")
+        if explicit_total is not None and abs(float(explicit_total) - float(computed_total)) > 0.01:
+            warnings.append(f"BLOCK_TOTAL_MISMATCH:{block['title']}")
+        finalized.append({"title": block["title"], "items": block["items"], "total": max(0.0, computed_total)})
     return finalized, warnings
 
 
@@ -405,6 +428,8 @@ def _parse_rows_sections_v1(rows: list[list[object]], fallback_block_name: str) 
             continue
         if first_lower in _ROW_HEADER_HINTS or first_lower.startswith("наименование"):
             continue
+        if first and _is_aggregate_or_tax_row_label(first):
+            continue
 
         nums_raw = [_parse_number(v) for v in row]
         nums = [n for n in nums_raw if n is not None]
@@ -446,8 +471,10 @@ def _parse_rows_sections_v1(rows: list[list[object]], fallback_block_name: str) 
         if not block["items"]:
             continue
         computed_total = sum(float(it["amount"] or 0.0) for it in block["items"])
-        total = float(block["explicit_total"]) if block.get("explicit_total") is not None else computed_total
-        finalized.append({"title": block["title"], "items": block["items"], "total": max(0.0, total)})
+        explicit_total = block.get("explicit_total")
+        if explicit_total is not None and abs(float(explicit_total) - float(computed_total)) > 0.01:
+            warnings.append(f"BLOCK_TOTAL_MISMATCH:{block['title']}")
+        finalized.append({"title": block["title"], "items": block["items"], "total": max(0.0, computed_total)})
     return finalized, warnings
 
 
@@ -502,6 +529,130 @@ def _apply_block_overrides(parsed_blocks: list[dict], overrides_raw: Optional[st
         filtered.append(next_block)
     return filtered, warnings
 
+
+def _norm_key(value: object) -> str:
+    text = _norm_text(value).lower().replace("ё", "е")
+    text = re.sub(r"^\d+([.)]\d+)*\s*", "", text)
+    text = re.sub(r"[^a-z0-9а-я]+", "", text)
+    return text
+
+
+def _row_amount_from_parsed(row: dict) -> float:
+    qty = row.get("qty")
+    unit = row.get("unit")
+    amount = row.get("amount")
+    if qty is not None and unit is not None and (amount is None):
+        return float(unit) if float(qty) == 0 else float(qty) * float(unit)
+    if amount is not None:
+        return max(0.0, float(amount))
+    if qty is not None and unit is None:
+        return max(0.0, float(qty))
+    return 0.0
+
+
+def _item_current_amount(item: ExpenseItem) -> float:
+    if item.mode == ItemMode.QTY_PRICE:
+        qty = float(item.qty or 0.0)
+        unit = float(item.unit_price_base or 0.0)
+        return unit if qty == 0 else qty * unit
+    return float(item.base_total or 0.0)
+
+
+def _load_group_top_level_with_children(
+    db: Session,
+    project_id: int,
+    group_id: int,
+) -> tuple[dict[str, tuple[ExpenseItem, list[ExpenseItem]]], list[ExpenseItem]]:
+    items = db.execute(
+        select(ExpenseItem).where(
+            ExpenseItem.project_id == project_id,
+            ExpenseItem.group_id == group_id,
+        ).order_by(ExpenseItem.id.asc())
+    ).scalars().all()
+    by_parent: dict[int, list[ExpenseItem]] = {}
+    all_ids = {int(it.id) for it in items}
+    for it in items:
+        if it.parent_item_id is None:
+            continue
+        parent_id = int(it.parent_item_id)
+        by_parent.setdefault(parent_id, []).append(it)
+    top_level = [it for it in items if it.parent_item_id is None or int(it.parent_item_id) not in all_ids]
+    blocks_by_key: dict[str, tuple[ExpenseItem, list[ExpenseItem]]] = {}
+    for parent in top_level:
+        children = by_parent.get(int(parent.id), [])
+        if not children:
+            continue
+        blocks_by_key[_norm_key(parent.title)] = (parent, children)
+    return blocks_by_key, top_level
+
+
+def _build_preview_diff_rows(
+    parsed_blocks: list[dict],
+    existing_blocks_by_key: dict[str, tuple[ExpenseItem, list[ExpenseItem]]],
+) -> list[dict]:
+    diff_rows: list[dict] = []
+    for block in parsed_blocks:
+        block_title = str(block.get("title") or "Блок")
+        block_key = _norm_key(block_title)
+        existing = existing_blocks_by_key.get(block_key)
+        existing_children_by_key: dict[str, ExpenseItem] = {}
+        if existing:
+            _, existing_children = existing
+            for child in existing_children:
+                existing_children_by_key[_norm_key(child.title)] = child
+        matched_existing_keys: set[str] = set()
+        for row in (block.get("items") or []):
+            row_title = str(row.get("title") or "Позиция")
+            row_key = _norm_key(row_title)
+            new_amount = _row_amount_from_parsed(row)
+            existing_child = existing_children_by_key.get(row_key)
+            if existing_child is None:
+                diff_rows.append(
+                    {
+                        "block_title": block_title,
+                        "row_title": row_title,
+                        "status": "new",
+                        "old_amount": None,
+                        "new_amount": new_amount,
+                    }
+                )
+                continue
+            matched_existing_keys.add(row_key)
+            old_amount = _item_current_amount(existing_child)
+            if abs(new_amount - old_amount) > 0.01:
+                diff_rows.append(
+                    {
+                        "block_title": block_title,
+                        "row_title": row_title,
+                        "status": "changed",
+                        "old_amount": old_amount,
+                        "new_amount": new_amount,
+                    }
+                )
+            else:
+                diff_rows.append(
+                    {
+                        "block_title": block_title,
+                        "row_title": row_title,
+                        "status": "unchanged",
+                        "old_amount": old_amount,
+                        "new_amount": new_amount,
+                    }
+                )
+        for key, existing_child in existing_children_by_key.items():
+            if key in matched_existing_keys:
+                continue
+            diff_rows.append(
+                {
+                    "block_title": block_title,
+                    "row_title": str(existing_child.title or "Позиция"),
+                    "status": "removed",
+                    "old_amount": _item_current_amount(existing_child),
+                    "new_amount": None,
+                }
+            )
+    return diff_rows
+
 def _get_project_or_404(db: Session, project_id: int) -> Project:
     p = db.get(Project, project_id)
     if not p:
@@ -519,6 +670,34 @@ def _get_item_or_404(db: Session, project_id: int, item_id: int) -> ExpenseItem:
     if not it or it.project_id != project_id:
         raise HTTPException(404, "ITEM_NOT_FOUND")
     return it
+
+
+def _delete_group_with_dependencies(db: Session, project_id: int, group_id: int) -> None:
+    g = _get_group_or_404(db, project_id, group_id)
+    try:
+        item_ids = db.execute(
+            select(ExpenseItem.id).where(
+                ExpenseItem.project_id == project_id,
+                ExpenseItem.group_id == group_id,
+            )
+        ).scalars().all()
+        if item_ids:
+            db.execute(
+                delete(ClientBillingAdjustment).where(
+                    ClientBillingAdjustment.expense_item_id.in_(item_ids)
+                )
+            )
+            db.execute(
+                delete(ExpenseItem).where(
+                    ExpenseItem.project_id == project_id,
+                    ExpenseItem.group_id == group_id,
+                )
+            )
+        db.delete(g)
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(500, f"GROUP_DELETE_FAILED: {exc.__class__.__name__}")
 
 def _parse_mode(mode_raw: str) -> ItemMode:
     try:
@@ -744,9 +923,13 @@ def update_group(project_id: int, group_id: int, payload: GroupUpdate, db: Sessi
 
 @router.delete("/{project_id}/groups/{group_id}")
 def delete_group(project_id: int, group_id: int, db: Session = Depends(get_db)):
-    g = _get_group_or_404(db, project_id, group_id)
-    db.delete(g)
-    db.commit()
+    _delete_group_with_dependencies(db, project_id, group_id)
+    return {"deleted": True}
+
+
+@router.post("/{project_id}/groups/{group_id}/delete")
+def delete_group_post(project_id: int, group_id: int, db: Session = Depends(get_db)):
+    _delete_group_with_dependencies(db, project_id, group_id)
     return {"deleted": True}
 
 
@@ -777,6 +960,8 @@ async def preview_contractor_estimate(
     )
     if not parsed_blocks:
         raise HTTPException(422, "ESTIMATE_PARSE_EMPTY")
+    existing_blocks_by_key, _ = _load_group_top_level_with_children(db, project_id, group_id)
+    diff_rows = _build_preview_diff_rows(parsed_blocks, existing_blocks_by_key)
 
     preview_blocks = []
     total_items = 0
@@ -800,6 +985,7 @@ async def preview_contractor_estimate(
         "items": total_items,
         "warnings": warnings[:100],
         "preview_blocks": preview_blocks,
+        "diff_rows": diff_rows[:400],
     }
 
 
@@ -812,6 +998,7 @@ async def import_contractor_estimate(
     group_id: int,
     file: UploadFile = File(...),
     overrides: Optional[str] = Form(default=None),
+    planned_pay_date: str = Form(...),
     db: Session = Depends(get_db),
 ):
     _get_project_or_404(db, project_id)
@@ -823,6 +1010,13 @@ async def import_contractor_estimate(
     content = await file.read()
     if not content:
         raise HTTPException(422, "ESTIMATE_FILE_EMPTY")
+    pay_date_raw = _norm_text(planned_pay_date)
+    if not pay_date_raw:
+        raise HTTPException(422, "PLANNED_PAY_DATE_REQUIRED")
+    try:
+        pay_date = date.fromisoformat(pay_date_raw)
+    except ValueError:
+        raise HTTPException(422, "PLANNED_PAY_DATE_INVALID")
 
     table_rows = _load_table_rows_from_file(filename, content)
     profile, parsed_blocks, warnings = _parse_contractor_estimate(
@@ -835,34 +1029,51 @@ async def import_contractor_estimate(
     if not parsed_blocks:
         raise HTTPException(422, "ESTIMATE_PARSE_EMPTY")
 
+    existing_blocks_by_key, _ = _load_group_top_level_with_children(db, project_id, group_id)
     imported_blocks = 0
     imported_items = 0
     created_parent_item_ids: list[int] = []
     for block in parsed_blocks:
-        parent = ExpenseItem(
-            stable_item_id=gen_stable_id("item"),
-            project_id=project_id,
-            group_id=group_id,
-            parent_item_id=None,
-            title=str(block["title"]),
-            mode=ItemMode.SINGLE_TOTAL,
-            qty=None,
-            unit_price_base=None,
-            base_total=float(block["total"]),
-            include_in_estimate=True,
-            extra_profit_enabled=False,
-            extra_profit_amount=0.0,
-            planned_pay_date=None,
-        )
-        db.add(parent)
-        db.flush()
-        created_parent_item_ids.append(int(parent.id))
+        block_title = str(block.get("title") or "Блок")
+        block_key = _norm_key(block_title)
+        existing = existing_blocks_by_key.get(block_key)
+        if existing is None:
+            parent = ExpenseItem(
+                stable_item_id=gen_stable_id("item"),
+                project_id=project_id,
+                group_id=group_id,
+                parent_item_id=None,
+                title=block_title,
+                mode=ItemMode.SINGLE_TOTAL,
+                qty=None,
+                unit_price_base=None,
+                base_total=float(block["total"]),
+                include_in_estimate=True,
+                extra_profit_enabled=False,
+                extra_profit_amount=0.0,
+                planned_pay_date=pay_date,
+            )
+            db.add(parent)
+            db.flush()
+            created_parent_item_ids.append(int(parent.id))
+            existing_children: list[ExpenseItem] = []
+        else:
+            parent, existing_children = existing
+            parent.title = block_title
+            parent.mode = ItemMode.SINGLE_TOTAL
+            parent.qty = None
+            parent.unit_price_base = None
+            parent.base_total = max(0.0, float(block.get("total") or 0.0))
+            parent.include_in_estimate = True
+            parent.planned_pay_date = pay_date
         imported_blocks += 1
 
-        for row in block["items"]:
+        existing_children_by_key = {_norm_key(ch.title): ch for ch in existing_children}
+        matched_existing_child_ids: set[int] = set()
+        for row in (block.get("items") or []):
             qty = row.get("qty")
             unit = row.get("unit")
-            amount = row.get("amount")
+            amount = _row_amount_from_parsed(row)
             mode = ItemMode.SINGLE_TOTAL
             base_total = float(amount or 0.0)
             out_qty: float | None = None
@@ -870,7 +1081,7 @@ async def import_contractor_estimate(
 
             if qty is not None and unit is not None:
                 computed = float(unit) if float(qty) == 0 else float(qty) * float(unit)
-                if amount is None or abs(float(amount) - computed) <= 0.01:
+                if abs(float(amount) - computed) <= 0.01:
                     mode = ItemMode.QTY_PRICE
                     out_qty = float(qty)
                     out_unit = float(unit)
@@ -878,31 +1089,55 @@ async def import_contractor_estimate(
                 else:
                     mode = ItemMode.SINGLE_TOTAL
                     base_total = float(amount)
-            elif amount is not None:
-                mode = ItemMode.SINGLE_TOTAL
-                base_total = float(amount)
-            elif qty is not None and unit is None:
-                mode = ItemMode.SINGLE_TOTAL
-                base_total = float(qty)
+            row_title = str(row.get("title") or "Позиция")
+            row_key = _norm_key(row_title)
+            existing_child = existing_children_by_key.get(row_key)
 
-            child = ExpenseItem(
-                stable_item_id=gen_stable_id("item"),
-                project_id=project_id,
-                group_id=group_id,
-                parent_item_id=int(parent.id),
-                title=str(row.get("title") or "Позиция"),
-                mode=mode,
-                qty=out_qty,
-                unit_price_base=out_unit,
-                base_total=max(0.0, float(base_total)),
-                include_in_estimate=True,
-                extra_profit_enabled=False,
-                extra_profit_amount=0.0,
-                planned_pay_date=None,
-            )
-            _refresh_item_calculated_base(child)
-            db.add(child)
+            if existing_child is None:
+                child = ExpenseItem(
+                    stable_item_id=gen_stable_id("item"),
+                    project_id=project_id,
+                    group_id=group_id,
+                    parent_item_id=int(parent.id),
+                    title=row_title,
+                    mode=mode,
+                    qty=out_qty,
+                    unit_price_base=out_unit,
+                    base_total=max(0.0, float(base_total)),
+                    include_in_estimate=False,
+                    extra_profit_enabled=False,
+                    extra_profit_amount=0.0,
+                    planned_pay_date=pay_date,
+                )
+                _refresh_item_calculated_base(child)
+                db.add(child)
+            else:
+                old_amount = _item_current_amount(existing_child)
+                existing_child.title = row_title
+                existing_child.mode = mode
+                existing_child.qty = out_qty
+                existing_child.unit_price_base = out_unit
+                existing_child.base_total = max(0.0, float(base_total))
+                existing_child.include_in_estimate = False
+                existing_child.planned_pay_date = pay_date
+                if mode == ItemMode.QTY_PRICE:
+                    _refresh_item_calculated_base(existing_child)
+                if base_total > old_amount + 0.01:
+                    existing_child.extra_profit_enabled = True
+                    existing_child.extra_profit_amount = float(existing_child.extra_profit_amount or 0.0) + (base_total - old_amount)
+                matched_existing_child_ids.add(int(existing_child.id))
             imported_items += 1
+        for existing_child in existing_children:
+            if int(existing_child.id) in matched_existing_child_ids:
+                continue
+            existing_child.base_total = 0.0
+            existing_child.mode = ItemMode.SINGLE_TOTAL
+            existing_child.qty = None
+            existing_child.unit_price_base = None
+            existing_child.include_in_estimate = False
+            existing_child.extra_profit_enabled = False
+            existing_child.extra_profit_amount = 0.0
+            existing_child.planned_pay_date = pay_date
 
     db.commit()
     return {

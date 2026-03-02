@@ -6,5 +6,6 @@ export default defineConfig({
   server: {
     port: 13011,
     strictPort: true,
+    allowedHosts: ['cxema-v7', 'cxema-v7.localhost'],
   },
 })

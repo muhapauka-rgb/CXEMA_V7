@@ -81,6 +81,14 @@ class ContractorEstimatePreviewBlockOut(BaseModel):
     sample_rows: List[str] = []
 
 
+class ContractorEstimateDiffRowOut(BaseModel):
+    block_title: str
+    row_title: str
+    status: str
+    old_amount: Optional[float] = None
+    new_amount: Optional[float] = None
+
+
 class ContractorEstimatePreviewOut(BaseModel):
     ok: bool = True
     profile: str
@@ -88,6 +96,7 @@ class ContractorEstimatePreviewOut(BaseModel):
     items: int
     warnings: List[str] = []
     preview_blocks: List[ContractorEstimatePreviewBlockOut] = []
+    diff_rows: List[ContractorEstimateDiffRowOut] = []
 
 class GroupUpdate(BaseModel):
     name: Optional[str] = None

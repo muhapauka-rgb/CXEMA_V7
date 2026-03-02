@@ -5,7 +5,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from html import escape
 from io import BytesIO
 import re
-from typing import Any, Optional, Set
+from typing import Any, Dict, Optional, Set
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse
@@ -266,6 +266,16 @@ def _estimate_pdf_file_name(project_title: Optional[str]) -> str:
     base = re.sub(r"[\\/:*?\"<>|]+", " ", base)
     base = re.sub(r"\s+", " ", base).strip()
     return f"Смета - {base}.pdf"
+
+
+def _drive_web_view_link(created: Dict[str, Any]) -> Optional[str]:
+    direct = str(created.get("webViewLink") or "").strip()
+    if direct:
+        return direct
+    file_id = str(created.get("id") or "").strip()
+    if file_id:
+        return f"https://drive.google.com/file/d/{file_id}/view"
+    return None
 
 
 def _project_or_404(db: Session, project_id: int) -> Project:
@@ -1375,9 +1385,9 @@ def _render_estimate2_html(payload: dict[str, Any]) -> str:
         <table class="sum-table">
           <thead>
             <tr>
-              <th style="width:34%">Сумма (до УСН)</th>
-              <th style="width:33%">УСН ({usn_rate_percent}%)</th>
-              <th style="width:33%">Сумма с УСН</th>
+              <th style="width:31%">Сумма (до УСН)</th>
+              <th style="width:31%">УСН ({usn_rate_percent}%)</th>
+              <th style="width:38%">Сумма с УСН</th>
             </tr>
           </thead>
           <tbody>
@@ -1395,8 +1405,8 @@ def _render_estimate2_html(payload: dict[str, Any]) -> str:
         <table class="payments-table">
           <thead>
             <tr>
-              <th style="width:60%">Дата оплаты</th>
-              <th style="width:40%">Сумма</th>
+              <th style="width:62%">Дата оплаты</th>
+              <th style="width:38%">Сумма</th>
             </tr>
           </thead>
           <tbody>
@@ -1707,7 +1717,9 @@ def _render_estimate2_pdf(payload: dict[str, Any]) -> bytes:
 
     sum_w = exp_w * 0.50
     sum_x = exp_x + (exp_w - sum_w)
-    sum_cols = [sum_w * 0.34, sum_w * 0.33, sum_w * 0.33]
+    # Keep right "Сумма" column width equal to the main expenses table right column (19% of full table).
+    # Compact blocks are 50% width, so right column share there should be 38% (0.5 * 0.38 = 0.19).
+    sum_cols = [sum_w * 0.31, sum_w * 0.31, sum_w * 0.38]
     rect_top(sum_x, y, sum_w, h_sum_panel_h, fill_color=bg_header, stroke_color=bg_header)
     draw_text_left(sum_x, y, h_sum_panel_h, "Сумма", font_bold, f_tbl_h, colors.white, 8)
     y -= h_sum_panel_h
@@ -1743,7 +1755,8 @@ def _render_estimate2_pdf(payload: dict[str, Any]) -> bytes:
 
     pay_w = exp_w * 0.50
     pay_x = exp_x + (exp_w - pay_w)
-    pay_cols = [pay_w * 0.60, pay_w * 0.40]
+    # Same alignment rule: right "Сумма" column = 19% of full table width -> 38% of compact block.
+    pay_cols = [pay_w * 0.62, pay_w * 0.38]
     rect_top(pay_x, y, pay_w, h_panel_h, fill_color=bg_header, stroke_color=bg_header)
     draw_text_left(pay_x, y, h_panel_h, "План по оплатам", font_bold, f_tbl_h, colors.white, 8)
     y -= h_panel_h
@@ -1905,7 +1918,7 @@ def upload_estimate_to_drive(
             "ok": True,
             "file_id": created.get("id"),
             "name": created.get("name"),
-            "web_view_link": created.get("webViewLink"),
+            "web_view_link": _drive_web_view_link(created),
             "web_content_link": created.get("webContentLink"),
             "folder_id": folder_id,
         }
@@ -1958,7 +1971,7 @@ def upload_estimate2_to_drive(
             "ok": True,
             "file_id": created.get("id"),
             "name": created.get("name"),
-            "web_view_link": created.get("webViewLink"),
+            "web_view_link": _drive_web_view_link(created),
             "web_content_link": created.get("webContentLink"),
             "folder_id": folder_id,
         }

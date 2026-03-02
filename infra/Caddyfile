@@ -1,0 +1,9 @@
+cxema-v7, cxema-v7.localhost {
+  tls internal
+  encode gzip
+
+  @api path /api/*
+  reverse_proxy @api 127.0.0.1:28011
+
+  reverse_proxy 127.0.0.1:13011
+}

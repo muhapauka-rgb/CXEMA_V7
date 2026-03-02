@@ -173,6 +173,13 @@ type ContractorEstimatePreviewOut = {
     total: number
     sample_rows: string[]
   }>
+  diff_rows: Array<{
+    block_title: string
+    row_title: string
+    status: "new" | "removed" | "changed" | "unchanged"
+    old_amount?: number | null
+    new_amount?: number | null
+  }>
 }
 
 type ContractorEstimateBlockEdit = {
@@ -259,9 +266,11 @@ function ImportEstimateIcon() {
 
 function UndoIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M9 7H4v5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <svg width="16" height="16" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M39.9 20.52h-22.76l2.86-2.88a.5.5 0 0 0 0-.71l-2.09-2.13a.5.5 0 0 0-.7 0l-7.37 7.37a.5.5 0 0 0 0 .71l7.37 7.37a.5.5 0 0 0 .7 0l2.09-2.12a.5.5 0 0 0 0-.71l-2.89-2.9h22.79a10.42 10.42 0 0 1 0 20.83h-27.59a.5.5 0 0 0-.5.5v3a.5.5 0 0 0 .5.5h27.59c19.1-.79 19.1-28.03 0-28.83z"
+      />
     </svg>
   )
 }
@@ -601,8 +610,11 @@ export default function ProjectPage() {
     file: File
     profile: string
     warnings: string[]
+    planned_pay_date: string
+    diff_rows: ContractorEstimatePreviewOut["diff_rows"]
     blocks: ContractorEstimateBlockEdit[]
   } | null>(null)
+  const [importDiffOnlyChanges, setImportDiffOnlyChanges] = useState(true)
   const [savingItemId, setSavingItemId] = useState<number | null>(null)
   const [isCommonAgencyOpen, setIsCommonAgencyOpen] = useState(false)
   const [groupAgencyEnabled, setGroupAgencyEnabled] = useState<Record<number, boolean>>({})
@@ -851,6 +863,12 @@ export default function ProjectPage() {
     window.open(url, "_blank", "noopener,noreferrer")
   }
 
+  function driveFileViewUrl(fileId?: string | null): string | null {
+    const id = String(fileId || "").trim()
+    if (!id) return null
+    return `https://drive.google.com/file/d/${encodeURIComponent(id)}/view`
+  }
+
   function openEstimate2Page() {
     if (!Number.isFinite(projectId)) return
     const qs = buildEstimateQueryString()
@@ -860,18 +878,49 @@ export default function ProjectPage() {
 
   async function uploadEstimate2ToDrive() {
     if (!Number.isFinite(projectId)) return
+    let popup: Window | null = null
     try {
       setError(null)
       setDriveUpload2Busy(true)
+      // Open popup from direct user gesture; later navigate it after async completes.
+      popup = window.open("about:blank", "_blank")
+      if (popup && popup.document) {
+        popup.document.title = "PDF"
+        popup.document.body.style.margin = "0"
+        popup.document.body.style.fontFamily = "system-ui, -apple-system, Segoe UI, sans-serif"
+        popup.document.body.style.background = "#f3f4f6"
+        popup.document.body.style.color = "#111827"
+        popup.document.body.style.display = "grid"
+        popup.document.body.style.placeItems = "center"
+        popup.document.body.innerHTML = '<div style="font-size:16px;font-weight:600;">Формируем PDF...</div>'
+      }
       const qs = buildEstimateQueryString()
       const out = await apiPost<EstimateDriveUpload>(
         `/api/projects/${projectId}/estimate2/drive-upload${qs ? `?${qs}` : ""}`,
         {},
       )
-      if (out.web_view_link) {
-        openExternalPage(out.web_view_link)
+      const target =
+        (out.web_view_link || "").trim() ||
+        driveFileViewUrl(out.file_id) ||
+        ((out.folder_id || "").trim() ? `https://drive.google.com/drive/folders/${encodeURIComponent(String(out.folder_id))}` : "")
+
+      if (target) {
+        if (popup && !popup.closed) {
+          popup.location.replace(target)
+        } else {
+          openExternalPage(target)
+        }
+      } else {
+        if (popup && !popup.closed && popup.document) {
+          popup.document.body.innerHTML =
+            '<div style="max-width:560px;padding:24px;font-size:15px;line-height:1.45;">PDF создан, но ссылка для открытия не получена. Проверь доступ к Google Drive и повтори.</div>'
+        }
+        setError("PDF создан, но ссылка на файл не получена. Проверь доступ к Google Drive.")
       }
     } catch (e) {
+      if (popup && !popup.closed && popup.document) {
+        popup.document.body.innerHTML = `<div style="max-width:560px;padding:24px;font-size:15px;line-height:1.45;">Ошибка открытия PDF: ${String(e)}</div>`
+      }
       setError(String(e))
     } finally {
       setDriveUpload2Busy(false)
@@ -959,17 +1008,10 @@ export default function ProjectPage() {
   }
 
   async function deleteGroup(group: Group) {
-    const groupItems = items.filter((it) => it.group_id === group.id)
-    const confirmed = window.confirm(
-      groupItems.length > 0
-        ? `Удалить группу "${group.name}" и все её позиции (${groupItems.length})?`
-        : `Удалить группу "${group.name}"?`,
-    )
-    if (!confirmed) return
     try {
       setError(null)
       setDeletingGroupId(group.id)
-      await apiDelete(`/api/projects/${projectId}/groups/${group.id}`)
+      await apiPost(`/api/projects/${projectId}/groups/${group.id}/delete`, {})
       if (editingGroupId === group.id) cancelGroupRename()
       await loadAll()
     } catch (e) {
@@ -1044,8 +1086,11 @@ export default function ProjectPage() {
         file,
         profile: preview.profile,
         warnings: preview.warnings,
+        planned_pay_date: "",
+        diff_rows: preview.diff_rows || [],
         blocks,
       })
+      setImportDiffOnlyChanges(true)
     } catch (e) {
       setError(String(e))
     } finally {
@@ -1057,10 +1102,13 @@ export default function ProjectPage() {
     if (!pendingEstimateImport) return
     if (!Number.isFinite(projectId)) return
     try {
+      const plannedPayDate = parseOptionalDate(pendingEstimateImport.planned_pay_date, "planned_pay_date")
+      if (!plannedPayDate) throw new Error("planned_pay_date: укажи дату оплаты")
       setError(null)
       setImportingEstimateGroupId(pendingEstimateImport.groupId)
       const formData = new FormData()
       formData.append("file", pendingEstimateImport.file)
+      formData.append("planned_pay_date", plannedPayDate)
       formData.append(
         "overrides",
         JSON.stringify(
@@ -1097,6 +1145,7 @@ export default function ProjectPage() {
   function cancelPendingEstimateImport() {
     if (importingEstimateGroupId != null) return
     setPendingEstimateImport(null)
+    setImportDiffOnlyChanges(true)
   }
 
   function openGroupEstimatePicker(groupId: number) {
@@ -1690,7 +1739,7 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                       <ImportEstimateIcon />
                     </button>
                     <button
-                      className="btn icon-btn"
+                      className="btn icon-btn undo-excel-btn"
                       aria-label="Отменить действие"
                       title="Отменить последнее действие"
                       disabled={
@@ -1706,9 +1755,10 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                       <UndoIcon />
                     </button>
                     <button
+                      type="button"
                       className="btn icon-btn"
                       aria-label="Удалить группу"
-                      disabled={creatingInGroup === g.id || savingGroupId === g.id || deletingGroupId === g.id || importingEstimateGroupId === g.id || undoingGroupId === g.id}
+                      disabled={deletingGroupId === g.id}
                       onClick={() => void deleteGroup(g)}
                     >
                       <TrashIcon />
@@ -2343,12 +2393,53 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
       <div className="modal-backdrop" onClick={cancelPendingEstimateImport}>
         <div className="panel contractor-import-modal" onClick={(e) => e.stopPropagation()}>
           <div className="h1">Импорт сметы подрядчика</div>
-          <div className="muted">
-            Профиль: {pendingEstimateImport.profile} · Группа: {groupsMap.get(pendingEstimateImport.groupId)?.name || "Расходы"}
-          </div>
           {!!pendingEstimateImport.warnings.length && (
             <div className="muted" style={{ color: "#ff9a9a" }}>
               Предупреждения: {pendingEstimateImport.warnings.slice(0, 3).join(" | ")}
+            </div>
+          )}
+          <label className="settings-field contractor-import-date-field">
+            <span className="settings-label">Дата оплаты</span>
+            <input
+              className="input"
+              type="date"
+              value={toCalendarDateValue(pendingEstimateImport.planned_pay_date)}
+              onChange={(e) => {
+                const nextDate = normalizeDateDraftInput(e.target.value)
+                setPendingEstimateImport((prev) => (prev ? { ...prev, planned_pay_date: nextDate } : prev))
+              }}
+            />
+          </label>
+
+          {!!pendingEstimateImport.diff_rows.length && (
+            <div className="contractor-diff-list">
+              <label className="contractor-diff-filter">
+                <input
+                  type="checkbox"
+                  checked={importDiffOnlyChanges}
+                  onChange={(e) => setImportDiffOnlyChanges(e.currentTarget.checked)}
+                />
+                Показывать только изменения
+              </label>
+              <div className="contractor-diff-head">
+                <span>Блок</span>
+                <span>Позиция</span>
+                <span>Было</span>
+                <span>Стало</span>
+              </div>
+              {pendingEstimateImport.diff_rows
+                .filter((row) => !importDiffOnlyChanges || row.status !== "unchanged")
+                .map((row, idx) => (
+                <div
+                  className={`contractor-diff-row contractor-diff-row-${row.status}`}
+                  key={`${row.block_title}-${row.row_title}-${idx}`}
+                >
+                  <span>{row.block_title}</span>
+                  <span>{row.row_title}</span>
+                  <span>{row.old_amount == null ? "—" : toMoneyInt(row.old_amount)}</span>
+                  <span>{row.new_amount == null ? "—" : toMoneyInt(row.new_amount)}</span>
+                </div>
+              ))}
             </div>
           )}
 
@@ -2406,7 +2497,8 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
               onClick={() => void applyPendingEstimateImport()}
               disabled={
                 importingEstimateGroupId != null ||
-                pendingEstimateImport.blocks.filter((b) => b.include).length === 0
+                pendingEstimateImport.blocks.filter((b) => b.include).length === 0 ||
+                !parseFlexibleDate(pendingEstimateImport.planned_pay_date)
               }
             >
               {importingEstimateGroupId != null ? "Импорт..." : "Импортировать"}

@@ -1709,36 +1709,117 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 }
 
 .contractor-import-modal {
-  width: min(960px, calc(100vw - 56px));
+  width: min(760px, calc(100vw - 56px));
   max-height: min(82vh, 900px);
   display: grid;
-  gap: 12px;
+  gap: 8px;
+  padding: 12px;
+  background: var(--modal-surface);
+  border-radius: var(--radius-lg);
+  overflow: auto;
+}
+
+.contractor-import-modal,
+.contractor-import-modal * {
+  font-family: inherit;
 }
 
 .contractor-import-list {
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  border: 0;
+  border-radius: 0;
   overflow: auto;
-  max-height: min(56vh, 560px);
+  max-height: min(54vh, 520px);
+}
+
+.contractor-import-date-field {
+  width: min(220px, 100%);
+}
+
+.contractor-diff-list {
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.contractor-diff-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.contractor-diff-head,
+.contractor-diff-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(220px, 1.4fr) 110px 110px;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 4px;
+}
+
+.contractor-diff-head {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  border-bottom: 1px solid var(--line);
+}
+
+.contractor-diff-head span:nth-child(3),
+.contractor-diff-head span:nth-child(4),
+.contractor-diff-row span:nth-child(3),
+.contractor-diff-row span:nth-child(4) {
+  text-align: right;
+}
+
+.contractor-diff-row {
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.contractor-diff-row:last-child {
+  border-bottom: 0;
+}
+
+.contractor-diff-row-new {
+  color: var(--accent);
+}
+
+.contractor-diff-row-removed {
+  text-decoration: line-through;
+  opacity: 0.72;
 }
 
 .contractor-import-head,
 .contractor-import-row {
   display: grid;
-  grid-template-columns: 72px minmax(340px, 1fr) 90px 140px;
-  gap: 10px;
+  grid-template-columns: 56px minmax(280px, 1fr) 72px 128px;
+  gap: 8px;
   align-items: center;
-  padding: 10px 12px;
+  padding: 8px 10px;
 }
 
 .contractor-import-head {
   position: sticky;
   top: 0;
-  background: var(--panel-2);
+  background: var(--modal-surface);
   border-bottom: 1px solid var(--line);
   font-weight: 700;
   font-size: 12px;
   color: var(--muted);
+}
+
+.contractor-import-head span:nth-child(1) {
+  text-align: center;
+}
+
+.contractor-import-head span:nth-child(2) {
+  text-align: left;
+}
+
+.contractor-import-head span:nth-child(3),
+.contractor-import-head span:nth-child(4) {
+  text-align: right;
 }
 
 .contractor-import-row {
@@ -1755,17 +1836,74 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   justify-content: center;
 }
 
+.contractor-import-check input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  border-radius: 0;
+  border: 0;
+  background: transparent;
+  margin: 0;
+  display: block;
+  box-shadow: none;
+  position: relative;
+}
+
+.contractor-import-check input[type="checkbox"]::before,
+.contractor-import-check input[type="checkbox"]::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 10px;
+  height: 1px;
+  background: var(--line-strong);
+  border-radius: 1px;
+  transform-origin: center;
+}
+
+.contractor-import-check input[type="checkbox"]::before {
+  transform: translate(-50%, -50%) rotate(0deg);
+}
+
+.contractor-import-check input[type="checkbox"]::after {
+  transform: translate(-50%, -50%) rotate(90deg);
+}
+
+.contractor-import-check input[type="checkbox"]:checked::before {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: #000000;
+  transform: translate(-50%, -50%) rotate(0deg);
+}
+
+.contractor-import-check input[type="checkbox"]:checked::after {
+  content: none;
+}
+
 .contractor-import-title {
   min-width: 0;
+  border: 0;
+  background: transparent;
+  padding-left: 0;
+  padding-right: 0;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
 }
 
 .contractor-import-num {
   text-align: right;
+  font-weight: 500;
+}
+
+.contractor-import-row span:nth-child(4) {
   font-weight: 700;
 }
 
 .contractor-import-actions {
   justify-content: flex-end;
+  margin-top: 2px;
 }
 
 .page-content-muted {
@@ -1917,8 +2055,15 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 
   .contractor-import-head,
   .contractor-import-row {
-    grid-template-columns: 56px minmax(220px, 1fr) 64px 90px;
+    grid-template-columns: 48px minmax(170px, 1fr) 60px 92px;
     gap: 8px;
     padding: 8px;
+  }
+
+  .contractor-diff-head,
+  .contractor-diff-row {
+    grid-template-columns: minmax(110px, 1fr) minmax(150px, 1.4fr) 78px 78px;
+    gap: 6px;
+    padding: 6px 2px;
   }
 }
