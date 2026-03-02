@@ -18,9 +18,9 @@ done
 
 echo "$PORT" > "$PORT_FILE"
 
-echo "✅ Backend will run on: http://localhost:$PORT"
+echo "✅ Backend will run on: http://127.0.0.1:$PORT"
 echo "   Saved port to: $PORT_FILE"
-echo "   Health: http://localhost:$PORT/health"
+echo "   Health: http://127.0.0.1:$PORT/health"
 echo ""
 
-exec uvicorn app.main:app --reload --host 0.0.0.0 --port "$PORT"
+exec uvicorn app.main:app --host 127.0.0.1 --port "$PORT"
