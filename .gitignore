@@ -27,3 +27,6 @@ frontend/dist/
 
 # TypeScript build cache
 frontend/*.tsbuildinfo
+# desktop artifacts
+dist-desktop/
+desktop/node_modules/

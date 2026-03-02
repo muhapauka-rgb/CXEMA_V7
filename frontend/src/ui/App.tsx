@@ -5,6 +5,7 @@ import ProjectPage from './pages/ProjectPage'
 import SettingsPage from './pages/SettingsPage'
 import LifePage from './pages/LifePage'
 import { apiGet } from './api'
+import OnboardingWizard from './components/OnboardingWizard'
 
 type ThemeMode = "dark" | "light"
 
@@ -33,6 +34,7 @@ type DiscountSummary = {
 const THEME_STORAGE_KEY = "cxema_theme"
 const ACCENT_STORAGE_KEY = "cxema_accent"
 const DEFAULT_ACCENT = "#ff2da1"
+const ONBOARDING_DONE_KEY = "cxema_onboarding_done_v1"
 
 function normalizeHexColor(value: string): string | null {
   const text = value.trim()
@@ -101,6 +103,9 @@ export default function App() {
   const [discountsData, setDiscountsData] = useState<DiscountSummary | null>(null)
   const [discountsLoading, setDiscountsLoading] = useState(false)
   const [discountsError, setDiscountsError] = useState<string | null>(null)
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState<boolean>(() => {
+    return localStorage.getItem(ONBOARDING_DONE_KEY) !== "1"
+  })
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme)
@@ -147,7 +152,7 @@ export default function App() {
 
   return (
     <>
-      <div className={isVisualOpen || isDiscountsOpen || isSettingsOpen ? "page-content-muted" : ""}>
+      <div className={isVisualOpen || isDiscountsOpen || isSettingsOpen || isOnboardingOpen ? "page-content-muted" : ""}>
         <div className="nav">
           <div className="brand"><CxemaWordmark /> <span className="v7">V7</span></div>
           <NavLink to="/" className={navClass}>Проекты</NavLink>
@@ -348,6 +353,15 @@ export default function App() {
             )}
           </div>
         </div>
+      )}
+
+      {isOnboardingOpen && (
+        <OnboardingWizard
+          onFinish={() => {
+            localStorage.setItem(ONBOARDING_DONE_KEY, "1")
+            setIsOnboardingOpen(false)
+          }}
+        />
       )}
     </>
   )

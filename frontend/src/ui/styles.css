@@ -1658,6 +1658,43 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   color: var(--bad);
 }
 
+.onboarding-backdrop {
+  z-index: 120;
+}
+
+.onboarding-panel {
+  width: min(760px, calc(100vw - 36px));
+  background: var(--modal-surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 18px;
+  padding: 18px 18px 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.onboarding-content {
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.onboarding-title {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.onboarding-list {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.onboarding-actions {
+  justify-content: space-between;
+  margin-top: 6px;
+}
+
 .settings-field {
   display: grid;
   gap: 6px;

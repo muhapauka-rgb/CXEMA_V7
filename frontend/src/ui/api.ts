@@ -34,3 +34,15 @@ export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
 export async function apiDelete<T = { deleted: boolean }>(path: string): Promise<T> {
   return request<T>("DELETE", path)
 }
+
+export async function apiPostForm<T>(path: string, body: FormData): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    body,
+  })
+  if (!res.ok) throw new Error(await res.text())
+  if (res.status === 204) {
+    return undefined as T
+  }
+  return res.json() as Promise<T>
+}

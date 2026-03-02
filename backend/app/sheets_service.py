@@ -68,6 +68,39 @@ def _client_secret_file() -> Path:
     return _resolve_path(settings.GOOGLE_CLIENT_SECRET_FILE)
 
 
+def save_google_client_secret(raw: bytes) -> Dict[str, Any]:
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        raise ValueError("GOOGLE_CLIENT_SECRET_INVALID_JSON") from exc
+
+    block = None
+    if isinstance(payload, dict):
+        if isinstance(payload.get("installed"), dict):
+            block = payload.get("installed")
+        elif isinstance(payload.get("web"), dict):
+            block = payload.get("web")
+    if not isinstance(block, dict):
+        raise ValueError("GOOGLE_CLIENT_SECRET_INVALID_FORMAT")
+
+    client_id = str(block.get("client_id") or "").strip()
+    client_secret = str(block.get("client_secret") or "").strip()
+    redirect_uris = block.get("redirect_uris")
+    if not client_id or not client_secret:
+        raise ValueError("GOOGLE_CLIENT_SECRET_INVALID_FORMAT")
+    if not isinstance(redirect_uris, list) or not any(str(u).strip() for u in redirect_uris):
+        raise ValueError("GOOGLE_CLIENT_SECRET_INVALID_FORMAT")
+
+    target = _client_secret_file()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {
+        "saved": True,
+        "path": str(target),
+        "client_id": client_id,
+    }
+
+
 def _round2(value: float) -> float:
     return round(float(value), 2)
 

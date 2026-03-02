@@ -25,6 +25,17 @@ type AppSettings = {
   updated_at: string
 }
 
+type RollingBackupStatus = {
+  mode: string
+  db_path: string
+  backup_dir: string
+  days: string
+  time: string
+  launch_agent: { exists: boolean; path: string; size_bytes: number; updated_at?: string | null }
+  current: { exists: boolean; path: string; size_bytes: number; updated_at?: string | null }
+  prev: { exists: boolean; path: string; size_bytes: number; updated_at?: string | null }
+}
+
 type SettingsPageProps = {
   asModal?: boolean
   onClose?: () => void
@@ -37,8 +48,11 @@ export default function SettingsPage({ asModal = false, onClose }: SettingsPageP
   const [savingTax, setSavingTax] = useState(false)
   const [isBackupOpen, setIsBackupOpen] = useState(false)
   const [isExportingRegistry, setIsExportingRegistry] = useState(false)
+  const [isUpdatingApp, setIsUpdatingApp] = useState(false)
+  const [rollingBackup, setRollingBackup] = useState<RollingBackupStatus | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const RELEASES_URL = "https://github.com/ponch/CXEMA_V7/releases"
 
   useEffect(() => {
     void loadAll()
@@ -54,6 +68,12 @@ export default function SettingsPage({ asModal = false, onClose }: SettingsPageP
       setStatus(googleStatus)
       setUsnMode(settings.usn_mode)
       setUsnRateRaw(String(settings.usn_rate_percent))
+      try {
+        const backupStatus = await apiGet<RollingBackupStatus>("/api/backup/rolling-status")
+        setRollingBackup(backupStatus)
+      } catch {
+        setRollingBackup(null)
+      }
     } catch (e) {
       setError(String(e))
     }
@@ -129,6 +149,24 @@ export default function SettingsPage({ asModal = false, onClose }: SettingsPageP
     }
   }
 
+  async function openUpdatesPage() {
+    if (window.cxemaDesktop?.runUpdate) {
+      try {
+        setError(null)
+        setIsUpdatingApp(true)
+        await window.cxemaDesktop.runUpdate()
+        setMsg("Открыт установщик обновления. Подтверди шаги в открывшемся окне.")
+      } catch (e) {
+        setError(String(e))
+      } finally {
+        setIsUpdatingApp(false)
+      }
+      return
+    }
+    window.open(RELEASES_URL, "_blank", "noopener,noreferrer")
+    setMsg("Открыта страница обновлений. Скачай свежую версию и установи поверх текущей.")
+  }
+
   const settingsBody = (
     <div className="settings-modal-layout">
       <section className="settings-section-block">
@@ -181,6 +219,25 @@ export default function SettingsPage({ asModal = false, onClose }: SettingsPageP
         <div className="row settings-actions-row">
           <button className="btn" onClick={() => void exportRegistryExcel()} disabled={isExportingRegistry}>Выгрузка базы</button>
           <button className="btn" onClick={() => setIsBackupOpen(true)}>Бэкап</button>
+          <button className="btn" onClick={() => void loadAll()}>Обновить статус</button>
+        </div>
+        {rollingBackup && (
+          <div className="settings-inline-note">
+            Фоновый backup: {rollingBackup.launch_agent.exists ? "активен" : "не активен"} · {rollingBackup.days} {rollingBackup.time}
+            <br />
+            current: {rollingBackup.current.exists ? "OK" : "нет"}{rollingBackup.current.updated_at ? ` (${new Date(rollingBackup.current.updated_at).toLocaleString("ru-RU")})` : ""}
+            <br />
+            prev: {rollingBackup.prev.exists ? "OK" : "нет"}{rollingBackup.prev.updated_at ? ` (${new Date(rollingBackup.prev.updated_at).toLocaleString("ru-RU")})` : ""}
+          </div>
+        )}
+      </section>
+
+      <section className="settings-section-block">
+        <div className="settings-section-title">Приложение</div>
+        <div className="row settings-actions-row">
+          <button className="btn" onClick={() => void openUpdatesPage()} disabled={isUpdatingApp}>
+            {isUpdatingApp ? "Запуск..." : "Обновить"}
+          </button>
         </div>
       </section>
     </div>

@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
 import re
 import zipfile
 from datetime import date, datetime
@@ -55,6 +56,23 @@ def backup_storage_dir() -> Path:
     target = db_path.parent / "backups"
     target.mkdir(parents=True, exist_ok=True)
     return target
+
+
+def _launch_agent_file() -> Path:
+    home = Path(os.path.expanduser("~"))
+    return home / "Library" / "LaunchAgents" / "com.cxema.v7.backup.plist"
+
+
+def _file_info(path: Path) -> dict[str, Any]:
+    if not path.exists() or not path.is_file():
+        return {"exists": False, "path": str(path), "size_bytes": 0, "updated_at": None}
+    stat = path.stat()
+    return {
+        "exists": True,
+        "path": str(path),
+        "size_bytes": int(stat.st_size),
+        "updated_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+    }
 
 
 def _safe_copy_name(copy_name: str) -> str:
@@ -742,6 +760,25 @@ def backup_copies():
         "retention_months": _RETENTION_MONTHS,
         "copies": copies,
         "latest": copies[0] if copies else None,
+    }
+
+
+@router.get("/rolling-status")
+def rolling_backup_status():
+    db_path = _resolve_path(settings.DB_PATH)
+    backup_dir = backup_storage_dir()
+    current_file = backup_dir / settings.AUTO_BACKUP_CURRENT_FILE
+    prev_file = backup_dir / settings.AUTO_BACKUP_PREV_FILE
+    launch_agent = _launch_agent_file()
+    return {
+        "mode": str(settings.AUTO_BACKUP_MODE),
+        "db_path": str(db_path),
+        "backup_dir": str(backup_dir),
+        "days": str(settings.AUTO_BACKUP_DAYS),
+        "time": str(settings.AUTO_BACKUP_TIME),
+        "launch_agent": _file_info(launch_agent),
+        "current": _file_info(current_file),
+        "prev": _file_info(prev_file),
     }
 
 

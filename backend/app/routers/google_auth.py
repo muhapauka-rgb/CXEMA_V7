@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File
 from fastapi.responses import HTMLResponse
 
 from ..schemas import GoogleAuthStartOut, GoogleAuthStatusOut
-from ..sheets_service import complete_google_oauth, get_google_auth_status, start_google_oauth
+from ..sheets_service import complete_google_oauth, get_google_auth_status, save_google_client_secret, start_google_oauth
 
 router = APIRouter(prefix="/api/google", tags=["google-auth"])
 
@@ -15,6 +15,8 @@ def _handle_error(exc: Exception) -> None:
         raise HTTPException(409, message) from exc
     if message == "GOOGLE_CLIENT_SECRET_FILE_NOT_FOUND":
         raise HTTPException(404, message) from exc
+    if message in {"GOOGLE_CLIENT_SECRET_INVALID_JSON", "GOOGLE_CLIENT_SECRET_INVALID_FORMAT"}:
+        raise HTTPException(422, message) from exc
     if message in {"GOOGLE_OAUTH_STATE_INVALID", "GOOGLE_OAUTH_STATE_EXPIRED"}:
         raise HTTPException(409, message) from exc
     if message in {"GOOGLE_LIBRARIES_NOT_INSTALLED", "GOOGLE_TOKEN_INVALID"}:
@@ -34,6 +36,21 @@ def auth_status():
 def auth_start():
     try:
         return start_google_oauth()
+    except Exception as exc:  # pragma: no cover
+        _handle_error(exc)
+
+
+@router.post("/auth/client-secret")
+async def auth_upload_client_secret(
+    file: UploadFile = File(...),
+):
+    try:
+        if not str(file.filename or "").lower().endswith(".json"):
+            raise ValueError("GOOGLE_CLIENT_SECRET_INVALID_FORMAT")
+        raw = await file.read()
+        if not raw:
+            raise ValueError("GOOGLE_CLIENT_SECRET_INVALID_FORMAT")
+        return save_google_client_secret(raw)
     except Exception as exc:  # pragma: no cover
         _handle_error(exc)
 

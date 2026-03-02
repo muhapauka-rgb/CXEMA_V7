@@ -137,11 +137,6 @@ type GoogleAuthStatus = {
   last_error?: string | null
 }
 
-type GoogleAuthStart = {
-  auth_url: string
-  state: string
-}
-
 type EstimateDriveUpload = {
   ok: boolean
   file_id?: string | null
@@ -573,7 +568,6 @@ export default function ProjectPage() {
   const [sheetPreview, setSheetPreview] = useState<SheetsPreview | null>(null)
   const [sheetPreviewToken, setSheetPreviewToken] = useState<string | null>(null)
   const [sheetsNotice, setSheetsNotice] = useState<string | null>(null)
-  const [oauthCheckStatus, setOauthCheckStatus] = useState<"ok" | "fail" | null>(null)
   const [googleAuth, setGoogleAuth] = useState<GoogleAuthStatus | null>(null)
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
@@ -831,17 +825,6 @@ export default function ProjectPage() {
       extra_profit_enabled: form.extra_profit_enabled,
       extra_profit_amount: extra,
       planned_pay_date: form.planned_pay_date || null,
-    }
-  }
-
-  async function refreshGoogleAuthStatus() {
-    try {
-      const auth = await apiGet<GoogleAuthStatus>(`/api/google/auth/status`)
-      setGoogleAuth(auth)
-      setOauthCheckStatus(auth.connected ? "ok" : "fail")
-      setError(null)
-    } catch (e) {
-      setOauthCheckStatus("fail")
     }
   }
 
@@ -2347,30 +2330,9 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
               </button>
             </div>
 
-            {sheetStatus?.mode === "real" && (
-              <div className="sheets-links-row sheets-links-row-oauth">
-                <button className="btn sheets-link-btn" onClick={() => void refreshGoogleAuthStatus()}>Проверить OAuth</button>
-                <button
-                  className="btn sheets-link-btn"
-                  onClick={() => void (async () => {
-                    try {
-                      const start = await apiGet<GoogleAuthStart>(`/api/google/auth/start`)
-                      window.open(start.auth_url, "_blank", "noopener,noreferrer")
-                    } catch (e) {
-                      setError(String(e))
-                    }
-                  })()}
-                >
-                  Подключить Google
-                </button>
-              </div>
-            )}
-            {sheetStatus?.mode === "real" && oauthCheckStatus && (
-              <div
-                className="muted sheets-oauth-status"
-                style={{ color: oauthCheckStatus === "ok" ? "#7adf9b" : "#ff9a9a" }}
-              >
-                {oauthCheckStatus === "ok" ? "OK" : "Fail"}
+            {sheetStatus?.mode === "real" && !googleAuth?.connected && (
+              <div className="muted bad">
+                Google OAuth не подключен. Подключи его в глобальных настройках.
               </div>
             )}
 

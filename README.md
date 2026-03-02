@@ -6,7 +6,33 @@
 - Backend: http://localhost:28011 (или ближайший свободный выше 28011 через `./start_backend.sh`)
 - Frontend: http://localhost:13011
 
+## План к действию приложения
+- Зафиксированный план передачи системы non-tech пользователю:
+  - [docs/План к действию приложения.md](/Users/ponch/CXEMA_V7/docs/План к действию приложения.md)
+
+## Desktop shell (Sprint 1)
+- Каркас desktop-оболочки находится в `desktop/`.
+- Детали и запуск:
+  - [desktop/README.md](/Users/ponch/CXEMA_V7/desktop/README.md)
+
 ## Быстрый старт (Mac)
+
+### Установка в 1 клик (для non-tech пользователя)
+- Двойной клик по файлу [install.command](/Users/ponch/CXEMA_V7/install.command)
+- Скрипт автоматически:
+  - поставит базовые зависимости (brew/python/node при необходимости),
+  - настроит backend/frontend/desktop,
+  - запустит приложение.
+
+### Обновление в 1 клик
+- Двойной клик по файлу [update.command](/Users/ponch/CXEMA_V7/update.command)
+- Скрипт автоматически:
+  - подтянет свежий код из GitHub,
+  - обновит зависимости backend/frontend/desktop,
+  - перезапустит приложение.
+
+### Готовый macOS установщик
+- Артефакт сборки: `dist-desktop/CXEMA V7-0.1.0-arm64.dmg`
 
 ### 1) Backend (FastAPI)
 ```bash

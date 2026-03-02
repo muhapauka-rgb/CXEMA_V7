@@ -11,5 +11,10 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_SECRET_FILE: str = "../data/google/client_secret.json"
     GOOGLE_TOKEN_FILE: str = "../data/google/token.json"
     GOOGLE_OAUTH_REDIRECT_URI: str = "http://localhost:28011/api/google/auth/callback"
+    AUTO_BACKUP_MODE: str = "LEGACY"  # LEGACY | MWF_ROLLING_DB
+    AUTO_BACKUP_DAYS: str = "MON,WED,FRI"
+    AUTO_BACKUP_TIME: str = "23:00"
+    AUTO_BACKUP_CURRENT_FILE: str = "app.backup.current.db"
+    AUTO_BACKUP_PREV_FILE: str = "app.backup.prev.db"
 
 settings = Settings()
