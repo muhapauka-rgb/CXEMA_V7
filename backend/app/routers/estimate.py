@@ -139,6 +139,8 @@ def _percent_amount(base: float, percent: float) -> float:
 def _parse_group_ids(raw: Optional[str]) -> Set[int]:
     if not raw:
         return set()
+    if not isinstance(raw, str):
+        raw = str(raw)
     out: Set[int] = set()
     for part in raw.split(","):
         token = part.strip()
