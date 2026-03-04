@@ -1775,6 +1775,15 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                           const isSubitem = it.parent_item_id != null
                           const childRows = childItemsByParent.get(it.id) || []
                           const hasSubitems = childRows.length > 0
+                          const baseValue = rowMath?.base ?? parseDraftNumber(draft.base_total)
+                          const childBaseTotal = childRows.reduce((acc, child) => {
+                            const childMath = itemMathById[child.id]
+                            if (childMath) return acc + childMath.base
+                            const childDraft = itemDrafts[child.id] || itemToSheetDraft(child)
+                            return acc + parseDraftNumber(childDraft.base_total)
+                          }, 0)
+                          const subitemsBaseDelta = childBaseTotal - baseValue
+                          const hasSubitemsBaseMismatch = !isSubitem && hasSubitems && Math.abs(subitemsBaseDelta) >= 0.005
                           const latestChildDate = childRows.reduce((maxDate, child) => {
                             const childDraft = itemDrafts[child.id] || itemToSheetDraft(child)
                             const parsed = parseFlexibleDate(childDraft.planned_pay_date || "")
@@ -1920,7 +1929,7 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                               </td>
                               <td className="col-sum">
                                 <input
-                                  className="input"
+                                  className={`input ${hasSubitemsBaseMismatch ? "sum-mismatch-input" : ""}`}
                                   value={displayDraftNumber(draft.base_total)}
                                   placeholder=""
                                   readOnly={shouldAutoCalcBaseTotal(draft.qty, draft.unit_price_base)}
@@ -2054,14 +2063,21 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                                 />
                               </td>
                               <td className="col-actions">
-                                <button
-                                  className="btn icon-btn"
-                                  aria-label="Удалить строку"
-                                  disabled={savingItemId === it.id}
-                                  onClick={() => void deleteItemRow(it.id)}
-                                >
-                                  <TrashIcon />
-                                </button>
+                                <div className="expense-actions-wrap">
+                                  <button
+                                    className="btn icon-btn"
+                                    aria-label="Удалить строку"
+                                    disabled={savingItemId === it.id}
+                                    onClick={() => void deleteItemRow(it.id)}
+                                  >
+                                    <TrashIcon />
+                                  </button>
+                                  {hasSubitemsBaseMismatch && (
+                                    <span className="row-total-hint">
+                                      Сумма вложенных отличается на {toMoneyIntSigned(subitemsBaseDelta)}
+                                    </span>
+                                  )}
+                                </div>
                               </td>
                             </tr>
                           )

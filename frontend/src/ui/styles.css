@@ -115,17 +115,11 @@ a {
   width: 224px;
   height: 34px;
   display: block;
-  color: #ffffff;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2.8;
-  stroke-linecap: square;
-  stroke-linejoin: miter;
-  shape-rendering: geometricPrecision;
+  filter: invert(1);
 }
 
 html[data-theme="light"] .brand-logo {
-  color: #000000;
+  filter: none;
 }
 
 .brand .v7 {
@@ -1018,7 +1012,7 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 .sheet-group {
   border: 0;
   border-radius: var(--radius);
-  overflow: hidden;
+  overflow: visible;
   background: transparent;
 }
 
@@ -1082,6 +1076,10 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 .expense-table {
   min-width: 930px;
   table-layout: fixed;
+}
+
+.expense-sheet .table-wrap {
+  overflow: visible;
 }
 
 .expense-table td {
@@ -1267,10 +1265,34 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 }
 
 .row-total-hint {
-  margin-top: 4px;
+  margin-top: 0;
   font-size: 11px;
   color: rgba(255, 45, 161, 0.76);
   white-space: nowrap;
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.sum-mismatch-input {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.sum-mismatch-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(255, 45, 161, 0.2);
+}
+
+.expense-actions-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  width: auto;
 }
 
 .agency-line {

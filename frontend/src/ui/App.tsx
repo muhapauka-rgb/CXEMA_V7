@@ -6,6 +6,7 @@ import SettingsPage from './pages/SettingsPage'
 import LifePage from './pages/LifePage'
 import { apiGet } from './api'
 import OnboardingWizard from './components/OnboardingWizard'
+import schemaLogo from './assets/schema-logo.svg'
 
 type ThemeMode = "dark" | "light"
 
@@ -57,21 +58,6 @@ function VisualSettingsIcon() {
       <path d="M3 17h18" />
       <circle cx="8" cy="7" r="3" />
       <circle cx="16" cy="17" r="3" />
-    </svg>
-  )
-}
-
-function CxemaWordmark() {
-  return (
-    <svg className="brand-logo" viewBox="24 0 288 70" aria-hidden="true">
-      <g transform="translate(-34 0)">
-        <path d="M58 12a24 24 0 1 0 0 46" />
-        <path d="M84 14 148 56" />
-        <path d="M148 14 84 56" />
-        <path d="M164 12v46M164 12h52M164 35h46M164 58h52" />
-        <path d="M232 58V12l24 40 24-40v46" />
-        <path d="M298 58 322 12l24 46M308 39h28" />
-      </g>
     </svg>
   )
 }
@@ -154,7 +140,7 @@ export default function App() {
     <>
       <div className={isVisualOpen || isDiscountsOpen || isSettingsOpen || isOnboardingOpen ? "page-content-muted" : ""}>
         <div className="nav">
-          <div className="brand"><CxemaWordmark /> <span className="v7">V7</span></div>
+          <div className="brand"><img className="brand-logo" src={schemaLogo} alt="Схема" /> <span className="v7">V7</span></div>
           <NavLink to="/" className={navClass}>Проекты</NavLink>
           <NavLink to="/life" className={navClass}>Жизнь</NavLink>
           <Link to="/?create=1" className="btn cta nav-add">+ Проект</Link>
