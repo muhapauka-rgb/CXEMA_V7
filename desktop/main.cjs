@@ -5,6 +5,7 @@ const { spawn } = require("child_process")
 const http = require("http")
 
 const ROOT = path.resolve(__dirname, "..")
+const RESOURCES_ROOT = app.isPackaged ? process.resourcesPath : ROOT
 const FRONTEND_URL = process.env.CXEMA_FRONTEND_URL || "http://localhost:13011"
 const BACKEND_HEALTH_URL = process.env.CXEMA_BACKEND_HEALTH_URL || "http://localhost:28011/health"
 const STARTUP_TIMEOUT_MS = 45_000
@@ -75,8 +76,11 @@ async function waitUntil(url, timeoutMs) {
 }
 
 function spawnBackend() {
-  const cwd = path.join(ROOT, "backend")
+  const cwd = path.join(RESOURCES_ROOT, "backend")
   const pyBin = path.join(cwd, ".venv", "bin", "python")
+  if (!fs.existsSync(pyBin)) {
+    throw new Error(`BACKEND_PYTHON_NOT_FOUND: ${pyBin}`)
+  }
   const env = desktopEnv()
   backendProc = spawn(
     pyBin,
@@ -118,6 +122,8 @@ async function ensureServices() {
     if (!ok) throw new Error("Backend не запустился")
   }
 
+  if (app.isPackaged) return
+
   const frontendAlive = await isUp(FRONTEND_URL)
   if (!frontendAlive) {
     spawnFrontend()
@@ -140,6 +146,14 @@ async function createMainWindow() {
       preload: path.join(__dirname, "preload.cjs"),
     },
   })
+  if (app.isPackaged) {
+    const entry = path.join(RESOURCES_ROOT, "frontend-dist", "index.html")
+    if (!fs.existsSync(entry)) {
+      throw new Error(`FRONTEND_DIST_NOT_FOUND: ${entry}`)
+    }
+    await mainWindow.loadFile(entry)
+    return
+  }
   await mainWindow.loadURL(FRONTEND_URL)
 }
 

@@ -24,12 +24,26 @@
       "preload.cjs",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "../backend",
+        "to": "backend"
+      },
+      {
+        "from": "../frontend/dist",
+        "to": "frontend-dist"
+      }
+    ],
     "asar": true,
     "mac": {
       "target": [
         "dmg"
       ],
-      "category": "public.app-category.business"
+      "category": "public.app-category.business",
+      "icon": "build/icon-1024.png"
+    },
+    "dmg": {
+      "icon": "build/icon-1024.png"
     }
   }
 }

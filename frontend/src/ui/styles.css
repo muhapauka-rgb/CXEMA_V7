@@ -105,15 +105,15 @@ a {
 .brand {
   display: inline-flex;
   align-items: center;
-  gap: 0;
-  margin-right: -2px;
+  gap: 16px;
+  margin-right: 56px;
   line-height: 1;
   flex: 0 0 auto;
 }
 
 .brand-logo {
-  width: 224px;
-  height: 34px;
+  width: 202px;
+  height: 31px;
   display: block;
   filter: invert(1);
 }
@@ -125,11 +125,12 @@ html[data-theme="light"] .brand-logo {
 .brand .v7 {
   color: #ffffff;
   font-family: "Roboto Mono", "SFMono-Regular", Menlo, Consolas, monospace;
-  font-weight: 500;
-  font-size: 34px;
+  font-weight: 700;
+  font-size: 37px;
   letter-spacing: -0.015em;
   line-height: 1;
-  margin-left: -34px;
+  margin-left: 0;
+  display: inline-block;
   transform: none;
 }
 
@@ -138,7 +139,7 @@ html[data-theme="light"] .brand .v7 {
 }
 
 .nav > .nav-link:first-of-type {
-  margin-left: 14px;
+  margin-left: 0;
 }
 
 .nav-add {
@@ -1712,6 +1713,33 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   font-size: 14px;
 }
 
+.onboarding-link-item {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.45;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.onboarding-link-item:hover {
+  color: var(--text);
+}
+
+.onboarding-link-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  text-decoration: none;
+}
+
 .onboarding-actions {
   justify-content: space-between;
   margin-top: 6px;
@@ -2029,13 +2057,13 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   }
 
   .brand-logo {
-    width: 198px;
-    height: 24px;
+    width: 178px;
+    height: 22px;
   }
 
   .brand .v7 {
     font-size: 24px;
-    margin-left: -26px;
+    margin-left: 0;
   }
 
   .nav-add {

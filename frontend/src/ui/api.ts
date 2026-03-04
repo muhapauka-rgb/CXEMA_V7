@@ -1,6 +1,6 @@
 export const API_BASE =
   (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/$/, "") ||
-  `http://${window.location.hostname}:28011`
+  `http://${window.location.hostname || "127.0.0.1"}:28011`
 
 async function request<T>(method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE", path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {

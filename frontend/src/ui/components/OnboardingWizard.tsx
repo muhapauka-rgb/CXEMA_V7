@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { apiGet, apiPostForm } from "../api"
 
 type GoogleAuthStatus = {
@@ -123,6 +123,7 @@ export default function OnboardingWizard({ onFinish }: Props) {
   const [msg, setMsg] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [uploadingSecret, setUploadingSecret] = useState(false)
+  const secretInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
     void refreshStatus()
@@ -160,6 +161,23 @@ export default function OnboardingWizard({ onFinish }: Props) {
     } finally {
       setBusy(false)
     }
+  }
+
+  function openExternal(url: string) {
+    window.open(url, "_blank", "noopener,noreferrer")
+  }
+
+  function openGoogleApisDashboard() {
+    openExternal("https://console.cloud.google.com/apis/dashboard")
+  }
+
+  function openGoogleApiLibraries() {
+    openExternal("https://console.cloud.google.com/apis/library/sheets.googleapis.com")
+    openExternal("https://console.cloud.google.com/apis/library/drive.googleapis.com")
+  }
+
+  function openGoogleCredentialsPage() {
+    openExternal("https://console.cloud.google.com/apis/credentials")
   }
 
   async function uploadClientSecret(file: File) {
@@ -227,18 +245,41 @@ export default function OnboardingWizard({ onFinish }: Props) {
           <div className="grid onboarding-content">
             <div className="onboarding-title">Подключение Google OAuth</div>
             <div className="onboarding-list">
-              <div>1. Открой Google Cloud Console: APIs & Services.</div>
-              <div>2. Включи Google Sheets API и Google Drive API.</div>
-              <div>3. Создай OAuth 2.0 Client ID (тип: Desktop app).</div>
-              <div>4. Скачай файл client_secret.json и загрузи его ниже.</div>
-              <div>5. Нажми «Подключить Google», выбери аккаунт, нажми «Разрешить».</div>
-              <div>6. Вернись сюда и нажми «Проверить подключение».</div>
+              <button type="button" className="onboarding-link-item" onClick={openGoogleApisDashboard}>
+                1. Открой Google Cloud Console: APIs & Services.
+              </button>
+              <button type="button" className="onboarding-link-item" onClick={openGoogleApiLibraries}>
+                2. Включи Google Sheets API и Google Drive API.
+              </button>
+              <button type="button" className="onboarding-link-item" onClick={openGoogleCredentialsPage}>
+                3. Создай OAuth 2.0 Client ID (тип: Desktop app).
+              </button>
+              <button
+                type="button"
+                className="onboarding-link-item"
+                onClick={() => secretInputRef.current?.click()}
+                disabled={uploadingSecret || busy}
+              >
+                4. Скачай файл client_secret.json и загрузи его ниже.
+              </button>
+              <button type="button" className="onboarding-link-item" onClick={() => void startOauth()} disabled={busy}>
+                5. Нажми «Подключить Google», выбери аккаунт, нажми «Разрешить».
+              </button>
+              <button
+                type="button"
+                className="onboarding-link-item"
+                onClick={() => void refreshStatus()}
+                disabled={busy || checking || uploadingSecret}
+              >
+                6. Вернись сюда и нажми «Проверить подключение».
+              </button>
             </div>
 
             <div className="row settings-actions-row">
               <label className="btn" style={{ cursor: uploadingSecret ? "not-allowed" : "pointer", opacity: uploadingSecret ? 0.55 : 1 }}>
                 Загрузить client_secret.json
                 <input
+                  ref={secretInputRef}
                   type="file"
                   accept=".json,application/json"
                   style={{ display: "none" }}
