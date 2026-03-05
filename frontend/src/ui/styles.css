@@ -798,7 +798,18 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   opacity: 0;
   pointer-events: none;
   cursor: pointer;
+  touch-action: manipulation;
+  z-index: 2;
   transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.project-delete-btn::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: -6px;
+  right: 0;
+  bottom: -6px;
 }
 
 .classic-project-tile:hover .project-delete-btn,
@@ -832,7 +843,18 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   opacity: 0;
   pointer-events: none;
   cursor: pointer;
+  touch-action: manipulation;
+  z-index: 2;
   transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.project-pause-btn::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: -6px;
+  right: -8px;
+  bottom: -6px;
 }
 
 .classic-project-tile:hover .project-pause-btn,
