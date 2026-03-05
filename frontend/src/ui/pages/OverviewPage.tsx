@@ -621,8 +621,8 @@ export default function OverviewPage() {
                     <div className="project-tile-text">
                       <div className="project-tile-title">{p.title}</div>
                       <div className="muted">{p.client_name || "—"}</div>
-                      <div className="muted">Получено на сегодня: {toMoney(metrics?.received_to_date || 0)}</div>
-                      <div className="muted">Потрачено по проекту: {toMoney(metrics?.spent_to_date || 0)}</div>
+                      <div className="muted">Получено: {toMoney(metrics?.received_to_date || 0)}</div>
+                      <div className="muted">Потрачено: {toMoney(metrics?.spent_to_date || 0)}</div>
                     </div>
                   </div>
                 </Link>

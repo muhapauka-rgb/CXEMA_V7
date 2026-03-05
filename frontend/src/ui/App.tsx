@@ -34,6 +34,7 @@ type DiscountSummary = {
 
 const THEME_STORAGE_KEY = "cxema_theme"
 const ACCENT_STORAGE_KEY = "cxema_accent"
+const KPI_COMPACT_STORAGE_KEY = "cxema_kpi_compact"
 const DEFAULT_ACCENT = "#ff2da1"
 const ONBOARDING_DONE_KEY = "cxema_onboarding_done_v1"
 
@@ -81,6 +82,7 @@ export default function App() {
     const saved = localStorage.getItem(ACCENT_STORAGE_KEY)
     return normalizeHexColor(saved || "") || DEFAULT_ACCENT
   })
+  const [kpiCompact, setKpiCompact] = useState<boolean>(() => localStorage.getItem(KPI_COMPACT_STORAGE_KEY) === "1")
   const [isVisualOpen, setIsVisualOpen] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [accentInput, setAccentInput] = useState(accent)
@@ -103,6 +105,11 @@ export default function App() {
     localStorage.setItem(ACCENT_STORAGE_KEY, accent)
     setAccentInput(accent)
   }, [accent])
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-kpi-density", kpiCompact ? "compact" : "normal")
+    localStorage.setItem(KPI_COMPACT_STORAGE_KEY, kpiCompact ? "1" : "0")
+  }, [kpiCompact])
 
   useEffect(() => {
     if (!isVisualOpen && !isDiscountsOpen && !isSettingsOpen) return
@@ -214,6 +221,12 @@ export default function App() {
                   onChange={(e) => applyAccent(e.target.value)}
                 />
                 <button className="btn" onClick={() => setAccent(DEFAULT_ACCENT)}>Сброс</button>
+              </div>
+
+              <div className="muted" style={{ color: "var(--text)", fontWeight: 700 }}>Сводка KPI</div>
+              <div className="row">
+                <button className={`btn ${!kpiCompact ? "tab-active" : ""}`} onClick={() => setKpiCompact(false)}>Обычная</button>
+                <button className={`btn ${kpiCompact ? "tab-active" : ""}`} onClick={() => setKpiCompact(true)}>Компактная</button>
               </div>
             </div>
           </div>

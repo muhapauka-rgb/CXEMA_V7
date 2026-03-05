@@ -45,7 +45,7 @@ function buildReadinessIssues(status: GoogleAuthStatus | null): ReadinessIssue[]
   if (!status.client_secret_configured) {
     issues.push({
       title: "Не настроен Google client_secret",
-      fix: "Создай OAuth 2.0 Client ID (Desktop app) в Google Cloud Console, скачай client_secret.json и загрузи его кнопкой «Загрузить client_secret.json».",
+      fix: `Создай OAuth 2.0 Client ID (Web application) в Google Cloud Console, добавь redirect URI: ${status.redirect_uri}, скачай client_secret.json и загрузи его кнопкой «Загрузить client_secret.json».`,
     })
   }
   if (!status.connected) {
@@ -171,13 +171,20 @@ export default function OnboardingWizard({ onFinish }: Props) {
     openExternal("https://console.cloud.google.com/apis/dashboard")
   }
 
-  function openGoogleApiLibraries() {
+  function openGoogleSheetsApiLibrary() {
     openExternal("https://console.cloud.google.com/apis/library/sheets.googleapis.com")
+  }
+
+  function openGoogleDriveApiLibrary() {
     openExternal("https://console.cloud.google.com/apis/library/drive.googleapis.com")
   }
 
   function openGoogleCredentialsPage() {
     openExternal("https://console.cloud.google.com/apis/credentials")
+  }
+
+  function openGoogleOAuthConsentPage() {
+    openExternal("https://console.cloud.google.com/apis/credentials/consent")
   }
 
   async function uploadClientSecret(file: File) {
@@ -194,7 +201,7 @@ export default function OnboardingWizard({ onFinish }: Props) {
       if (text.includes("GOOGLE_CLIENT_SECRET_INVALID_JSON")) {
         setErr("Файл не JSON. Скачай корректный client_secret.json из Google Cloud Console и загрузи его снова.")
       } else if (text.includes("GOOGLE_CLIENT_SECRET_INVALID_FORMAT")) {
-        setErr("Некорректный формат client_secret.json. Нужен OAuth 2.0 Client ID (Desktop app).")
+        setErr("Некорректный формат client_secret.json. Нужен OAuth 2.0 Client ID (Web application) с redirect URI приложения.")
       } else {
         setErr(text)
       }
@@ -248,11 +255,35 @@ export default function OnboardingWizard({ onFinish }: Props) {
               <button type="button" className="onboarding-link-item" onClick={openGoogleApisDashboard}>
                 1. Открой Google Cloud Console: APIs & Services.
               </button>
-              <button type="button" className="onboarding-link-item" onClick={openGoogleApiLibraries}>
-                2. Включи Google Sheets API и Google Drive API.
+              <div>
+                2. Включи{" "}
+                <button
+                  type="button"
+                  className="onboarding-link-item"
+                  style={{ display: "inline", textDecoration: "underline" }}
+                  onClick={openGoogleSheetsApiLibrary}
+                >
+                  Google Sheets API
+                </button>
+                {" "}и{" "}
+                <button
+                  type="button"
+                  className="onboarding-link-item"
+                  style={{ display: "inline", textDecoration: "underline" }}
+                  onClick={openGoogleDriveApiLibrary}
+                >
+                  Google Drive API
+                </button>
+                .
+              </div>
+              <button type="button" className="onboarding-link-item" onClick={openGoogleCredentialsPage}>
+                3. Открой Credentials и нажми Create credentials → OAuth client ID.
+              </button>
+              <button type="button" className="onboarding-link-item" onClick={openGoogleOAuthConsentPage}>
+                4. В OAuth consent screen добавь/проверь scopes: Google Sheets и Google Drive.
               </button>
               <button type="button" className="onboarding-link-item" onClick={openGoogleCredentialsPage}>
-                3. Создай OAuth 2.0 Client ID (тип: Desktop app).
+                5. Создай OAuth 2.0 Client ID (тип: Web application) и добавь redirect URI: {status?.redirect_uri || "http://localhost:28011/api/google/auth/callback"}.
               </button>
               <button
                 type="button"
@@ -260,10 +291,10 @@ export default function OnboardingWizard({ onFinish }: Props) {
                 onClick={() => secretInputRef.current?.click()}
                 disabled={uploadingSecret || busy}
               >
-                4. Скачай файл client_secret.json и загрузи его ниже.
+                6. Скачай файл client_secret.json и загрузи его ниже.
               </button>
               <button type="button" className="onboarding-link-item" onClick={() => void startOauth()} disabled={busy}>
-                5. Нажми «Подключить Google», выбери аккаунт, нажми «Разрешить».
+                7. Нажми «Подключить Google», выбери аккаунт, нажми «Разрешить».
               </button>
               <button
                 type="button"
@@ -271,7 +302,7 @@ export default function OnboardingWizard({ onFinish }: Props) {
                 onClick={() => void refreshStatus()}
                 disabled={busy || checking || uploadingSecret}
               >
-                6. Вернись сюда и нажми «Проверить подключение».
+                8. Вернись сюда и нажми «Проверить подключение».
               </button>
             </div>
 

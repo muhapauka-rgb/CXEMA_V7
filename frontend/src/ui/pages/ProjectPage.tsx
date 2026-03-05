@@ -1723,6 +1723,11 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
               return !!draft.discount_enabled
             })
             const showRowTotalColumn = showExtraProfitColumns || showDiscountColumns
+            const expenseColumnCount =
+              9
+              + (showRowTotalColumn ? 1 : 0)
+              + (showExtraProfitColumns ? 1 : 0)
+              + (showDiscountColumns ? 1 : 0)
             const baseTotal = topLevelItems
               .reduce((acc, it) => acc + (itemMathById[it.id]?.total ?? itemInternalTotal(it)), 0)
             const agencyEnabled = !!groupAgencyEnabled[g.id]
@@ -1759,8 +1764,8 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                       {g.name}
                     </button>
                   )}
-                  <div className="row">
-                    <span>{toMoney(total)}</span>
+                  <div className="sheet-group-actions">
+                    <span className="sheet-group-total">{toMoney(total)}</span>
                     <button
                       className="btn sheet-plus-btn"
                       disabled={creatingInGroup === g.id || savingGroupId === g.id || deletingGroupId === g.id || importingEstimateGroupId === g.id}
@@ -1818,27 +1823,31 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                   </div>
                 </div>
 
-                {gItems.length > 0 && (
-                  <div className="table-wrap">
-                    <table className="table expense-table">
-                      <thead>
+                <div className="table-wrap">
+                  <table className="table expense-table">
+                    <thead>
+                      <tr>
+                        <th className="col-title">Статья</th>
+                        <th className="col-date">Дата<br />оплаты</th>
+                        <th className="col-qty">Шт</th>
+                        <th className="col-unit">Цена<br />за ед</th>
+                        <th className="col-sum">Сумма</th>
+                        {showRowTotalColumn && <th className="col-row-total">Итог<br />строки</th>}
+                        {showExtraProfitColumns && <th className="col-extra-amount">Доп<br />прибыль</th>}
+                        <th className="col-extra-toggle">Доп<br />прибыль</th>
+                        {showDiscountColumns && <th className="col-discount-amount">Скидка</th>}
+                        <th className="col-discount-toggle">Скидка</th>
+                        <th className="col-estimate">В<br />смету</th>
+                        <th className="col-actions" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {orderedRows.length === 0 && (
                         <tr>
-                          <th className="col-title">Статья</th>
-                          <th className="col-date">Дата<br />оплаты</th>
-                          <th className="col-qty">Шт</th>
-                          <th className="col-unit">Цена<br />за ед</th>
-                          <th className="col-sum">Сумма</th>
-                          {showRowTotalColumn && <th className="col-row-total">Итог<br />строки</th>}
-                          {showExtraProfitColumns && <th className="col-extra-amount">Доп<br />прибыль</th>}
-                          <th className="col-extra-toggle">Доп<br />прибыль</th>
-                          {showDiscountColumns && <th className="col-discount-amount">Скидка</th>}
-                          <th className="col-discount-toggle">Скидка</th>
-                          <th className="col-estimate">В<br />смету</th>
-                          <th className="col-actions" />
+                          <td className="muted" colSpan={expenseColumnCount}>Расходов пока нет</td>
                         </tr>
-                      </thead>
-                      <tbody>
-                        {orderedRows.map((it) => {
+                      )}
+                      {orderedRows.map((it) => {
                           const draft = itemDrafts[it.id] || itemToSheetDraft(it)
                           const rowMath = itemMathById[it.id]
                           const rowTotal = rowMath?.total ?? itemDraftTotal(draft)
@@ -2151,11 +2160,10 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                               </td>
                             </tr>
                           )
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+                      })}
+                    </tbody>
+                  </table>
+                </div>
 
                 <div className="panel agency-line group-agency-line">
                   <div className="agency-row">
