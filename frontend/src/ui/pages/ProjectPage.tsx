@@ -568,6 +568,8 @@ export default function ProjectPage() {
   const [sheetPreview, setSheetPreview] = useState<SheetsPreview | null>(null)
   const [sheetPreviewToken, setSheetPreviewToken] = useState<string | null>(null)
   const [sheetsNotice, setSheetsNotice] = useState<string | null>(null)
+  const estimatePreviewWindowRef = useRef<Window | null>(null)
+  const estimatePdfWindowRef = useRef<Window | null>(null)
   const [googleAuth, setGoogleAuth] = useState<GoogleAuthStatus | null>(null)
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
@@ -846,6 +848,88 @@ export default function ProjectPage() {
     window.open(url, "_blank", "noopener,noreferrer")
   }
 
+  function getEstimatePopupWidth(): number {
+    const maxWidth = Math.max(520, Math.floor(window.screen.availWidth * 0.92))
+    const targetWidth = Math.floor(window.screen.availWidth * 0.56)
+    return Math.min(maxWidth, Math.max(520, targetWidth))
+  }
+
+  function openEstimatePreviewPopup(url: string) {
+    const popupWidth = getEstimatePopupWidth()
+    const popupHeight = Math.max(720, Math.floor(window.screen.availHeight * 0.88))
+    const popupLeft = Math.max(0, Math.floor((window.screen.availWidth - popupWidth) / 2))
+    const popupTop = Math.max(0, Math.floor((window.screen.availHeight - popupHeight) / 2))
+    const popup =
+      (estimatePreviewWindowRef.current && !estimatePreviewWindowRef.current.closed
+        ? estimatePreviewWindowRef.current
+        : window.open(
+            "about:blank",
+            "cxema-estimate-preview",
+            `popup=yes,width=${popupWidth},height=${popupHeight},left=${popupLeft},top=${popupTop},resizable=yes,scrollbars=no`,
+          ))
+    if (popup && !popup.closed) {
+      estimatePreviewWindowRef.current = popup
+      try {
+        popup.resizeTo(popupWidth, popupHeight)
+        popup.moveTo(popupLeft, popupTop)
+      } catch {
+        // Some environments can block window geometry controls.
+      }
+      popup.location.replace(url)
+      popup.focus()
+      return
+    }
+    openExternalPage(url)
+  }
+
+  function openEstimatePopup(url: string) {
+    const popupWidth = getEstimatePopupWidth()
+    const popupHeight = Math.max(720, window.screen.availHeight)
+    const popupLeft = Math.max(0, Math.floor((window.screen.availWidth - popupWidth) / 2))
+    const popup =
+      (estimatePdfWindowRef.current && !estimatePdfWindowRef.current.closed
+        ? estimatePdfWindowRef.current
+        : window.open(
+            "about:blank",
+            "cxema-estimate-pdf",
+            `popup=yes,width=${popupWidth},height=${popupHeight},left=${popupLeft},top=0,resizable=yes,scrollbars=no`,
+          ))
+    if (popup && !popup.closed) {
+      estimatePdfWindowRef.current = popup
+      try {
+        popup.resizeTo(popupWidth, popupHeight)
+        popup.moveTo(popupLeft, 0)
+      } catch {
+        // Some environments can block window geometry controls.
+      }
+      popup.location.replace(url)
+      popup.focus()
+      return
+    }
+    openExternalPage(url)
+  }
+
+  useEffect(() => {
+    return () => {
+      const previewWindow = estimatePreviewWindowRef.current
+      if (previewWindow && !previewWindow.closed) {
+        try {
+          previewWindow.close()
+        } catch {
+          // Ignore close errors on window unload.
+        }
+      }
+      const pdfWindow = estimatePdfWindowRef.current
+      if (pdfWindow && !pdfWindow.closed) {
+        try {
+          pdfWindow.close()
+        } catch {
+          // Ignore close errors on window unload.
+        }
+      }
+    }
+  }, [])
+
   function driveFileViewUrl(fileId?: string | null): string | null {
     const id = String(fileId || "").trim()
     if (!id) return null
@@ -856,56 +940,42 @@ export default function ProjectPage() {
     if (!Number.isFinite(projectId)) return
     const qs = buildEstimateQueryString()
     const url = `${API_BASE}/api/projects/${projectId}/estimate2/page${qs ? `?${qs}` : ""}`
-    openExternalPage(url)
+    openEstimatePreviewPopup(url)
   }
 
   async function uploadEstimate2ToDrive() {
     if (!Number.isFinite(projectId)) return
-    let popup: Window | null = null
     try {
       setError(null)
+      setSheetsNotice(null)
       setDriveUpload2Busy(true)
-      // Open popup from direct user gesture; later navigate it after async completes.
-      popup = window.open("about:blank", "_blank")
-      if (popup && popup.document) {
-        popup.document.title = "PDF"
-        popup.document.body.style.margin = "0"
-        popup.document.body.style.fontFamily = "system-ui, -apple-system, Segoe UI, sans-serif"
-        popup.document.body.style.background = "#f3f4f6"
-        popup.document.body.style.color = "#111827"
-        popup.document.body.style.display = "grid"
-        popup.document.body.style.placeItems = "center"
-        popup.document.body.innerHTML = '<div style="font-size:16px;font-weight:600;">Формируем PDF...</div>'
-      }
       const qs = buildEstimateQueryString()
-      const out = await apiPost<EstimateDriveUpload>(
-        `/api/projects/${projectId}/estimate2/drive-upload${qs ? `?${qs}` : ""}`,
-        {},
-      )
-      const target =
-        (out.web_view_link || "").trim() ||
-        driveFileViewUrl(out.file_id) ||
-        ((out.folder_id || "").trim() ? `https://drive.google.com/drive/folders/${encodeURIComponent(String(out.folder_id))}` : "")
+      // Open the same HTML template as "Просмотр", so layout is 1:1 identical.
+      const previewUrl = `${API_BASE}/api/projects/${projectId}/estimate2/page${qs ? `?${qs}` : ""}`
+      openEstimatePopup(previewUrl)
 
-      if (target) {
-        if (popup && !popup.closed) {
-          popup.location.replace(target)
-        } else {
-          openExternalPage(target)
+      // Save to Google Drive in background, do not block local PDF preview.
+      void (async () => {
+        try {
+          const out = await apiPost<EstimateDriveUpload>(
+            `/api/projects/${projectId}/estimate2/drive-upload${qs ? `?${qs}` : ""}`,
+            {},
+          )
+          const target =
+            (out.web_view_link || "").trim() ||
+            driveFileViewUrl(out.file_id) ||
+            ((out.folder_id || "").trim() ? `https://drive.google.com/drive/folders/${encodeURIComponent(String(out.folder_id))}` : "")
+          if (!target) {
+            setError("PDF открыт. Фоновое сохранение в Google Drive завершилось без ссылки на файл.")
+          }
+        } catch (e) {
+          setError(`PDF открыт. Ошибка фонового сохранения в Google Drive: ${String(e)}`)
+        } finally {
+          setDriveUpload2Busy(false)
         }
-      } else {
-        if (popup && !popup.closed && popup.document) {
-          popup.document.body.innerHTML =
-            '<div style="max-width:560px;padding:24px;font-size:15px;line-height:1.45;">PDF создан, но ссылка для открытия не получена. Проверь доступ к Google Drive и повтори.</div>'
-        }
-        setError("PDF создан, но ссылка на файл не получена. Проверь доступ к Google Drive.")
-      }
+      })()
     } catch (e) {
-      if (popup && !popup.closed && popup.document) {
-        popup.document.body.innerHTML = `<div style="max-width:560px;padding:24px;font-size:15px;line-height:1.45;">Ошибка открытия PDF: ${String(e)}</div>`
-      }
       setError(String(e))
-    } finally {
       setDriveUpload2Busy(false)
     }
   }

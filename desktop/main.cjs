@@ -15,6 +15,11 @@ let mainWindow = null
 let backendProc = null
 let frontendProc = null
 
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
+if (!hasSingleInstanceLock) {
+  app.quit()
+}
+
 function updateCommandPath() {
   return path.join(ROOT, "update.command")
 }
@@ -158,13 +163,22 @@ async function createMainWindow() {
 }
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit()
+  app.quit()
 })
 
 app.on("before-quit", () => {
   stopChild(frontendProc)
   stopChild(backendProc)
 })
+
+if (hasSingleInstanceLock) {
+  app.on("second-instance", () => {
+    if (!mainWindow) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+  })
+}
 
 app.whenReady().then(async () => {
   try {
@@ -178,6 +192,16 @@ app.whenReady().then(async () => {
     })
 
     await ensureServices()
+    await createMainWindow()
+  } catch (err) {
+    dialog.showErrorBox("Ошибка запуска CXEMA V7", String(err))
+    app.quit()
+  }
+})
+
+app.on("activate", async () => {
+  if (BrowserWindow.getAllWindows().length > 0) return
+  try {
     await createMainWindow()
   } catch (err) {
     dialog.showErrorBox("Ошибка запуска CXEMA V7", String(err))
