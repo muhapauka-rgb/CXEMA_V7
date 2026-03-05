@@ -27,7 +27,18 @@
     "extraResources": [
       {
         "from": "../backend",
-        "to": "backend"
+        "to": "backend",
+        "filter": [
+          "**/*",
+          "!tests{,/**/*}",
+          "!.pytest_cache{,/**/*}",
+          "!**/__pycache__{,/**/*}",
+          "!**/*.pyc",
+          "!**/*.pyo",
+          "!.venv/lib/python3.9/site-packages/_pytest{,/**/*}",
+          "!.venv/lib/python3.9/site-packages/pip{,/**/*}",
+          "!.venv/lib/python3.9/site-packages/pip-*.dist-info{,/**/*}"
+        ]
       },
       {
         "from": "../frontend/dist",
