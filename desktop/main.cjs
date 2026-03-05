@@ -14,6 +14,7 @@ const POLL_MS = 700
 let mainWindow = null
 let backendProc = null
 let frontendProc = null
+let isQuitting = false
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 if (!hasSingleInstanceLock) {
@@ -111,12 +112,26 @@ function spawnFrontend() {
 }
 
 function stopChild(child) {
-  if (!child || child.killed) return
+  if (!child || child.killed || child.exitCode !== null) return
   try {
     child.kill("SIGTERM")
   } catch {
     // ignore
   }
+  // If child ignores SIGTERM, force kill to avoid orphan background load.
+  setTimeout(() => {
+    if (child.exitCode !== null || child.killed) return
+    try {
+      child.kill("SIGKILL")
+    } catch {
+      // ignore
+    }
+  }, 1500)
+}
+
+function stopManagedServices() {
+  stopChild(frontendProc)
+  stopChild(backendProc)
 }
 
 async function ensureServices() {
@@ -151,6 +166,22 @@ async function createMainWindow() {
       preload: path.join(__dirname, "preload.cjs"),
     },
   })
+  mainWindow.on("close", () => {
+    if (isQuitting) return
+    isQuitting = true
+    // Ensure popup windows (PDF/preview) are also closed so helpers don't linger.
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win === mainWindow) continue
+      try {
+        win.close()
+      } catch {
+        // ignore
+      }
+    }
+  })
+  mainWindow.on("closed", () => {
+    mainWindow = null
+  })
   if (app.isPackaged) {
     const entry = path.join(RESOURCES_ROOT, "frontend-dist", "index.html")
     if (!fs.existsSync(entry)) {
@@ -163,12 +194,18 @@ async function createMainWindow() {
 }
 
 app.on("window-all-closed", () => {
+  isQuitting = true
   app.quit()
 })
 
 app.on("before-quit", () => {
-  stopChild(frontendProc)
-  stopChild(backendProc)
+  isQuitting = true
+  stopManagedServices()
+})
+
+app.on("will-quit", () => {
+  isQuitting = true
+  stopManagedServices()
 })
 
 if (hasSingleInstanceLock) {
