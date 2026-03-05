@@ -491,7 +491,7 @@ input[type="range"]::-moz-range-thumb {
 
 .kpi-value {
   margin-top: 5px;
-  font-size: 30px;
+  font-size: 26px;
   line-height: 1;
   font-weight: 800;
   letter-spacing: -0.02em;
@@ -505,7 +505,7 @@ input[type="range"]::-moz-range-thumb {
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: 30px;
+  font-size: 26px;
   line-height: 1;
   font-weight: 800;
   letter-spacing: -0.02em;
@@ -537,7 +537,7 @@ html[data-kpi-density="compact"] .dashboard-strip .muted {
 
 html[data-kpi-density="compact"] .dashboard-strip .kpi-value,
 html[data-kpi-density="compact"] .dashboard-strip .kpi-value-input {
-  font-size: 26px;
+  font-size: 22px;
   margin-top: 3px;
 }
 
@@ -1027,7 +1027,7 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   border-radius: 0;
   background: transparent;
   justify-content: flex-start;
-  font-size: 30px;
+  font-size: 26px;
   font-weight: 700;
   letter-spacing: -0.01em;
   color: var(--muted);
@@ -2108,7 +2108,7 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   .dashboard-strip .kpi-value,
   .dashboard-strip .kpi-value-input {
     margin-top: clamp(2px, 0.45vw, 5px);
-    font-size: clamp(20px, 1.9vw, 30px);
+    font-size: clamp(17px, 1.6vw, 26px);
   }
 }
 
@@ -2225,7 +2225,7 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   }
 
   .kpi-value {
-    font-size: clamp(18px, 4.3vw, 23px);
+    font-size: clamp(15px, 3.7vw, 20px);
   }
 
   .top-panel,
@@ -2249,7 +2249,7 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   }
 
   .sheets-link-btn {
-    font-size: 23px;
+    font-size: 20px;
   }
 
   .contractor-import-head,
