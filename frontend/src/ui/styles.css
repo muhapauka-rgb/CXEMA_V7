@@ -523,24 +523,20 @@ input[type="range"]::-moz-range-thumb {
   text-overflow: ellipsis;
 }
 
-html[data-kpi-density="compact"] .dashboard-strip,
-html[data-kpi-density="compact"] .overview-kpi-strip {
+html[data-kpi-density="compact"] .dashboard-strip {
   gap: 8px;
 }
 
-html[data-kpi-density="compact"] .dashboard-strip .kpi-card,
-html[data-kpi-density="compact"] .overview-kpi-strip .kpi-card {
+html[data-kpi-density="compact"] .dashboard-strip .kpi-card {
   padding: 9px 10px;
 }
 
-html[data-kpi-density="compact"] .dashboard-strip .muted,
-html[data-kpi-density="compact"] .overview-kpi-strip .muted {
+html[data-kpi-density="compact"] .dashboard-strip .muted {
   font-size: 12px;
 }
 
 html[data-kpi-density="compact"] .dashboard-strip .kpi-value,
-html[data-kpi-density="compact"] .dashboard-strip .kpi-value-input,
-html[data-kpi-density="compact"] .overview-kpi-strip .kpi-value {
+html[data-kpi-density="compact"] .dashboard-strip .kpi-value-input {
   font-size: 26px;
   margin-top: 3px;
 }
@@ -694,6 +690,8 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 }
 
 .overview-table {
+  min-width: 0;
+  width: max-content;
   table-layout: fixed;
 }
 
@@ -2099,23 +2097,11 @@ html[data-theme="light"] .overview-table tbody td:last-child {
     gap: clamp(6px, 0.85vw, 10px);
   }
 
-  .overview-kpi-strip {
-    gap: clamp(6px, 0.85vw, 10px);
-  }
-
   .dashboard-strip .kpi-card {
     padding: clamp(7px, 0.9vw, 12px);
   }
 
-  .overview-kpi-strip .kpi-card {
-    padding: clamp(7px, 0.9vw, 12px);
-  }
-
   .dashboard-strip .muted {
-    font-size: clamp(11px, 0.9vw, 13px);
-  }
-
-  .overview-kpi-strip .muted {
     font-size: clamp(11px, 0.9vw, 13px);
   }
 
@@ -2124,16 +2110,10 @@ html[data-theme="light"] .overview-table tbody td:last-child {
     margin-top: clamp(2px, 0.45vw, 5px);
     font-size: clamp(20px, 1.9vw, 30px);
   }
-
-  .overview-kpi-strip .kpi-value {
-    margin-top: clamp(2px, 0.45vw, 5px);
-    font-size: clamp(20px, 1.9vw, 30px);
-  }
 }
 
 @media (max-width: 1540px) {
-  .dashboard-strip,
-  .overview-kpi-strip {
+  .dashboard-strip {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
@@ -2288,8 +2268,7 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 }
 
 @media (max-width: 640px) {
-  .dashboard-strip,
-  .overview-kpi-strip {
+  .dashboard-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -2299,8 +2278,7 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 }
 
 @media (max-width: 389px) {
-  .dashboard-strip,
-  .overview-kpi-strip {
+  .dashboard-strip {
     grid-template-columns: 1fr;
   }
 }

@@ -636,13 +636,13 @@ export default function OverviewPage() {
           <div className="table-wrap">
             <table className="table overview-table">
               <colgroup>
-                <col style={{ width: "220px" }} />
-                <col style={{ width: "120px" }} />
-                <col style={{ width: "120px" }} />
-                <col style={{ width: "120px" }} />
-                <col style={{ width: "120px" }} />
-                <col style={{ width: "140px" }} />
-                <col style={{ width: "120px" }} />
+                <col style={{ width: "170px" }} />
+                <col style={{ width: "108px" }} />
+                <col style={{ width: "108px" }} />
+                <col style={{ width: "108px" }} />
+                <col style={{ width: "112px" }} />
+                <col style={{ width: "128px" }} />
+                <col style={{ width: "112px" }} />
               </colgroup>
               <thead>
                 <tr>
