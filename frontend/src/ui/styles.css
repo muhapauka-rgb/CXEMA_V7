@@ -461,6 +461,7 @@ input[type="range"]::-moz-range-thumb {
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 16px;
   align-items: start;
+  transform: translateY(16px);
 }
 
 .life-kpi-strip .kpi-card {
