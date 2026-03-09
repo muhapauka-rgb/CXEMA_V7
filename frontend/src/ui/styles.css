@@ -451,13 +451,17 @@ input[type="range"]::-moz-range-thumb {
 .dashboard-strip {
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(170px, 1fr));
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .overview-kpi-strip {
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(170px, 1fr));
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .dashboard-strip .kpi-card,
@@ -466,7 +470,7 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .life-kpi-strip {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(170px, 1fr));
   gap: 16px;
   align-items: start;
   transform: translateY(16px);
@@ -2088,10 +2092,6 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   .classic-layout {
     grid-template-columns: 1fr;
   }
-
-  .life-kpi-strip {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 1320px) and (min-width: 861px) {
@@ -2111,16 +2111,6 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   .dashboard-strip .kpi-value-input {
     margin-top: clamp(2px, 0.45vw, 5px);
     font-size: clamp(17px, 1.6vw, 26px);
-  }
-}
-
-@media (max-width: 1540px) {
-  .dashboard-strip {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-
-  .life-kpi-strip {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 }
 
@@ -2183,10 +2173,6 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 
   .grid-2 {
     grid-template-columns: 1fr;
-  }
-
-  .life-kpi-strip {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 
   .payments-layout,
@@ -2274,17 +2260,7 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 }
 
 @media (max-width: 640px) {
-  .dashboard-strip {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .grid-2 {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 389px) {
-  .dashboard-strip {
     grid-template-columns: 1fr;
   }
 }
