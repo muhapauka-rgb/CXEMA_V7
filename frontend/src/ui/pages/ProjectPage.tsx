@@ -221,6 +221,8 @@ type ItemSheetDraft = {
   discount_amount: string
 }
 
+type ItemFormulaField = "qty" | "unit_price_base" | "base_total"
+
 function TrashIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -384,10 +386,22 @@ function normalizeDateDraftInput(raw: string): string {
   return parseFlexibleDate(value) || value
 }
 
-function normalizeNumberDraftInput(raw: string): string {
+function normalizeNumberDraftInput(raw: string, options?: { baseRaw?: string }): string {
   const value = raw.trim()
   if (!value) return ""
+  const baseValue = options?.baseRaw == null ? null : parseInputNumber(options.baseRaw)
+  const parsed = parseInputNumber(value, { baseValue })
+  if (parsed != null) return formatNumberValueForInput(parsed)
   return formatNumberForInput(value)
+}
+
+function isFormulaLikeInput(raw: string): boolean {
+  const value = raw.trim().replace(/\s+/g, "")
+  if (!value) return false
+  if (/^[+\-*/]/.test(value)) return true
+  if (/[()*/]/.test(value)) return true
+  const tail = value.startsWith("-") ? value.slice(1) : value
+  return tail.includes("+") || tail.includes("-")
 }
 
 function isZeroLikeDraftNumber(raw: string): boolean {
@@ -404,11 +418,11 @@ function displayNumberValue(value: number): string {
   return displayDraftNumber(formatNumberValueForInput(value))
 }
 
-function normalizeNumberDraftInputKeepingZero(raw: string, previousRaw: string): string {
+function normalizeNumberDraftInputKeepingZero(raw: string, previousRaw: string, options?: { baseRaw?: string }): string {
   if (!raw.trim() && isZeroLikeDraftNumber(previousRaw)) {
-    return normalizeNumberDraftInput(previousRaw)
+    return normalizeNumberDraftInput(previousRaw, options)
   }
-  return normalizeNumberDraftInput(raw)
+  return normalizeNumberDraftInput(raw, options)
 }
 
 function parseOptionalDate(raw: string, field: string): string | null {
@@ -530,27 +544,33 @@ function itemToSheetDraft(item: Item): ItemSheetDraft {
   }
 }
 
-function calcAutoBaseTotalValue(qtyRaw: string, unitRaw: string): number | null {
+function calcAutoBaseTotalValue(
+  qtyRaw: string,
+  unitRaw: string,
+  options?: { qtyBaseRaw?: string; unitBaseRaw?: string }
+): number | null {
   const unitValue = unitRaw.trim()
   if (!unitValue) return null
-  const u = parseInputNumber(unitValue)
+  const unitBase = options?.unitBaseRaw == null ? null : parseInputNumber(options.unitBaseRaw)
+  const u = parseInputNumber(unitValue, { baseValue: unitBase })
   if (u == null || u < 0) return null
 
   const qtyValue = qtyRaw.trim()
   if (!qtyValue) return u
-  const q = parseInputNumber(qtyValue)
+  const qtyBase = options?.qtyBaseRaw == null ? null : parseInputNumber(options.qtyBaseRaw)
+  const q = parseInputNumber(qtyValue, { baseValue: qtyBase })
   if (q == null || q < 0) return null
   return q === 0 ? u : q * u
 }
 
-function tryCalcBaseTotal(qtyRaw: string, unitRaw: string): string | null {
-  const value = calcAutoBaseTotalValue(qtyRaw, unitRaw)
+function tryCalcBaseTotal(qtyRaw: string, unitRaw: string, options?: { qtyBaseRaw?: string; unitBaseRaw?: string }): string | null {
+  const value = calcAutoBaseTotalValue(qtyRaw, unitRaw, options)
   if (value == null) return null
   return formatNumberForInput(String(value))
 }
 
-function shouldAutoCalcBaseTotal(qtyRaw: string, unitRaw: string): boolean {
-  return calcAutoBaseTotalValue(qtyRaw, unitRaw) != null
+function shouldAutoCalcBaseTotal(qtyRaw: string, unitRaw: string, options?: { qtyBaseRaw?: string; unitBaseRaw?: string }): boolean {
+  return calcAutoBaseTotalValue(qtyRaw, unitRaw, options) != null
 }
 
 export default function ProjectPage() {
@@ -597,6 +617,7 @@ export default function ProjectPage() {
   const [editingGroupName, setEditingGroupName] = useState("")
   const [savingGroupId, setSavingGroupId] = useState<number | null>(null)
   const [itemDrafts, setItemDrafts] = useState<Record<number, ItemSheetDraft>>({})
+  const [itemFormulaDrafts, setItemFormulaDrafts] = useState<Record<string, string>>({})
   const [creatingInGroup, setCreatingInGroup] = useState<number | null>(null)
   const [importingEstimateGroupId, setImportingEstimateGroupId] = useState<number | null>(null)
   const [undoingGroupId, setUndoingGroupId] = useState<number | null>(null)
@@ -623,6 +644,37 @@ export default function ProjectPage() {
     reason: "",
   })
   const [hasAdjustment, setHasAdjustment] = useState(false)
+
+  function formulaKey(itemId: number, field: ItemFormulaField): string {
+    return `${itemId}:${field}`
+  }
+
+  function rememberItemFormula(itemId: number, field: ItemFormulaField, rawInput: string) {
+    const key = formulaKey(itemId, field)
+    const value = rawInput.trim()
+    setItemFormulaDrafts((prev) => {
+      if (!isFormulaLikeInput(value)) {
+        if (!(key in prev)) return prev
+        const next = { ...prev }
+        delete next[key]
+        return next
+      }
+      if (prev[key] === value) return prev
+      return { ...prev, [key]: value }
+    })
+  }
+
+  function restoreItemFormula(itemId: number, draft: ItemSheetDraft, field: ItemFormulaField) {
+    const remembered = itemFormulaDrafts[formulaKey(itemId, field)]
+    if (!remembered || draft[field] === remembered) return
+    setItemDrafts((prev) => ({
+      ...prev,
+      [itemId]: {
+        ...draft,
+        [field]: remembered,
+      },
+    }))
+  }
 
   const [planDrafts, setPlanDrafts] = useState<Record<number, PaymentDraft>>({})
   const [factDrafts, setFactDrafts] = useState<Record<number, PaymentDraft>>({})
@@ -1647,14 +1699,14 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
               onFocus={(e) => handleZeroFocus(e.currentTarget)}
               onChange={(e) => setProjectPriceDraft(e.target.value)}
               onBlur={(e) => {
-                const next = normalizeNumberDraftInput(e.currentTarget.value)
+                const next = normalizeNumberDraftInput(e.currentTarget.value, { baseRaw: formatNumberValueForInput(project.project_price_total) })
                 setProjectPriceDraft(next)
                 void saveProjectPrice(next)
               }}
               onKeyDown={(e) => {
                 if (e.key !== "Enter") return
                 e.preventDefault()
-                const next = normalizeNumberDraftInput(e.currentTarget.value)
+                const next = normalizeNumberDraftInput(e.currentTarget.value, { baseRaw: formatNumberValueForInput(project.project_price_total) })
                 setProjectPriceDraft(next)
                 void saveProjectPrice(next)
               }}
@@ -1969,9 +2021,13 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                                   className="input"
                                   value={displayDraftNumber(draft.qty)}
                                   placeholder=""
+                                  onFocus={() => restoreItemFormula(it.id, draft, "qty")}
                                   onChange={(e) => {
                                     const nextQty = e.target.value
-                                    const autoTotal = tryCalcBaseTotal(nextQty, draft.unit_price_base)
+                                    const autoTotal = tryCalcBaseTotal(nextQty, draft.unit_price_base, {
+                                      qtyBaseRaw: draft.qty,
+                                      unitBaseRaw: draft.unit_price_base,
+                                    })
                                     setItemDrafts((prev) => ({
                                       ...prev,
                                       [it.id]: {
@@ -1982,7 +2038,8 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                                     }))
                                   }}
                                   onBlur={(e) => {
-                                    const nextQty = normalizeNumberDraftInputKeepingZero(e.currentTarget.value, draft.qty)
+                                    rememberItemFormula(it.id, "qty", e.currentTarget.value)
+                                    const nextQty = normalizeNumberDraftInputKeepingZero(e.currentTarget.value, draft.qty, { baseRaw: draft.qty })
                                     const autoTotal = tryCalcBaseTotal(nextQty, draft.unit_price_base)
                                     const next = { ...draft, qty: nextQty, base_total: autoTotal ?? draft.base_total }
                                     setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
@@ -1991,7 +2048,8 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                                   onKeyDown={(e) => {
                                     if (e.key !== "Enter") return
                                     e.preventDefault()
-                                    const nextQty = normalizeNumberDraftInputKeepingZero(e.currentTarget.value, draft.qty)
+                                    rememberItemFormula(it.id, "qty", e.currentTarget.value)
+                                    const nextQty = normalizeNumberDraftInputKeepingZero(e.currentTarget.value, draft.qty, { baseRaw: draft.qty })
                                     const autoTotal = tryCalcBaseTotal(nextQty, draft.unit_price_base)
                                     const next = { ...draft, qty: nextQty, base_total: autoTotal ?? draft.base_total }
                                     commitItemDraft(it, next)
@@ -2003,9 +2061,13 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                                   className="input"
                                   value={displayDraftNumber(draft.unit_price_base)}
                                   placeholder=""
+                                  onFocus={() => restoreItemFormula(it.id, draft, "unit_price_base")}
                                   onChange={(e) => {
                                     const nextUnit = e.target.value
-                                    const autoTotal = tryCalcBaseTotal(draft.qty, nextUnit)
+                                    const autoTotal = tryCalcBaseTotal(draft.qty, nextUnit, {
+                                      qtyBaseRaw: draft.qty,
+                                      unitBaseRaw: draft.unit_price_base,
+                                    })
                                     setItemDrafts((prev) => ({
                                       ...prev,
                                       [it.id]: {
@@ -2016,7 +2078,8 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                                     }))
                                   }}
                                   onBlur={(e) => {
-                                    const nextUnit = normalizeNumberDraftInputKeepingZero(e.currentTarget.value, draft.unit_price_base)
+                                    rememberItemFormula(it.id, "unit_price_base", e.currentTarget.value)
+                                    const nextUnit = normalizeNumberDraftInputKeepingZero(e.currentTarget.value, draft.unit_price_base, { baseRaw: draft.unit_price_base })
                                     const autoTotal = tryCalcBaseTotal(draft.qty, nextUnit)
                                     const next = { ...draft, unit_price_base: nextUnit, base_total: autoTotal ?? draft.base_total }
                                     setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
@@ -2025,7 +2088,8 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                                   onKeyDown={(e) => {
                                     if (e.key !== "Enter") return
                                     e.preventDefault()
-                                    const nextUnit = normalizeNumberDraftInputKeepingZero(e.currentTarget.value, draft.unit_price_base)
+                                    rememberItemFormula(it.id, "unit_price_base", e.currentTarget.value)
+                                    const nextUnit = normalizeNumberDraftInputKeepingZero(e.currentTarget.value, draft.unit_price_base, { baseRaw: draft.unit_price_base })
                                     const autoTotal = tryCalcBaseTotal(draft.qty, nextUnit)
                                     const next = { ...draft, unit_price_base: nextUnit, base_total: autoTotal ?? draft.base_total }
                                     commitItemDraft(it, next)
@@ -2037,18 +2101,32 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                                   className={`input ${hasSubitemsBaseMismatch ? "sum-mismatch-input" : ""}`}
                                   value={displayDraftNumber(draft.base_total)}
                                   placeholder=""
-                                  readOnly={shouldAutoCalcBaseTotal(draft.qty, draft.unit_price_base)}
+                                  readOnly={shouldAutoCalcBaseTotal(draft.qty, draft.unit_price_base, {
+                                    qtyBaseRaw: draft.qty,
+                                    unitBaseRaw: draft.unit_price_base,
+                                  })}
                                   onChange={(e) => setItemDrafts((prev) => ({ ...prev, [it.id]: { ...draft, base_total: e.target.value } }))}
-                                  onFocus={(e) => handleZeroFocus(e.currentTarget)}
+                                  onFocus={(e) => {
+                                    restoreItemFormula(it.id, draft, "base_total")
+                                    handleZeroFocus(e.currentTarget)
+                                  }}
                                   onBlur={(e) => {
-                                    const next = { ...draft, base_total: normalizeNumberDraftInputKeepingZero(e.currentTarget.value, draft.base_total) }
+                                    rememberItemFormula(it.id, "base_total", e.currentTarget.value)
+                                    const next = {
+                                      ...draft,
+                                      base_total: normalizeNumberDraftInputKeepingZero(e.currentTarget.value, draft.base_total, { baseRaw: draft.base_total }),
+                                    }
                                     setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
                                     void persistItemRow(it, next)
                                   }}
                                   onKeyDown={(e) => {
                                     if (e.key !== "Enter") return
                                     e.preventDefault()
-                                    const next = { ...draft, base_total: normalizeNumberDraftInputKeepingZero(e.currentTarget.value, draft.base_total) }
+                                    rememberItemFormula(it.id, "base_total", e.currentTarget.value)
+                                    const next = {
+                                      ...draft,
+                                      base_total: normalizeNumberDraftInputKeepingZero(e.currentTarget.value, draft.base_total, { baseRaw: draft.base_total }),
+                                    }
                                     commitItemDraft(it, next)
                                   }}
                                 />
