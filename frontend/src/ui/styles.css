@@ -1,5 +1,6 @@
 :root {
   --nav-height: 52px;
+  --container-px: 26px;
   --bg: #0b0f14;
   --nav-bg: rgba(11, 15, 20, 0.72);
   --panel-soft: rgba(255, 255, 255, 0.02);
@@ -87,6 +88,18 @@ a {
   padding: calc(var(--nav-height) + 4px) 26px 14px;
   display: grid;
   gap: 10px;
+}
+
+.project-page-grid {
+  padding-top: var(--project-sticky-height, 0px);
+}
+
+.project-page-grid .sticky-stack {
+  position: fixed;
+  top: var(--nav-height);
+  left: var(--container-px);
+  right: var(--container-px);
+  z-index: 21;
 }
 
 .nav {
@@ -1063,9 +1076,9 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 
 .expense-sheet,
 .income-sheet {
+  display: block;
   width: min(1120px, 100%);
   margin-right: auto;
-  gap: 10px;
 }
 
 .expense-group-controls {
@@ -1098,6 +1111,11 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   font-weight: 800;
   padding: 8px 11px;
   border-bottom: 1px solid var(--row-line);
+}
+
+.expense-table th {
+  position: static;
+  top: auto;
 }
 
 .sheet-group-title {
@@ -2141,6 +2159,7 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 @media (max-width: 860px) {
   :root {
     --nav-height: 90px;
+    --container-px: 8px;
   }
 
   .container {
@@ -2221,8 +2240,7 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   }
 
   .top-panel,
-  .top-panel-sticky,
-  .sticky-stack {
+  .top-panel-sticky {
     position: static;
     top: auto;
     z-index: auto;

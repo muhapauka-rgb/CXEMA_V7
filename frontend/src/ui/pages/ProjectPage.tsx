@@ -626,13 +626,18 @@ export default function ProjectPage() {
 
   const [planDrafts, setPlanDrafts] = useState<Record<number, PaymentDraft>>({})
   const [factDrafts, setFactDrafts] = useState<Record<number, PaymentDraft>>({})
+  const [projectStickyHeight, setProjectStickyHeight] = useState(0)
+  const projectStickyRef = useRef<HTMLDivElement | null>(null)
   const groupEstimateFileInputsRef = useRef<Record<number, HTMLInputElement | null>>({})
 
   const selectedItem = useMemo(
     () => items.find((it) => it.id === selectedItemId) || null,
     [items, selectedItemId],
   )
-  const groupsMap = useMemo(() => new Map(groups.map((g) => [g.id, g])), [groups])
+  const projectStickyStyle = useMemo(
+    () => ({ "--project-sticky-height": `${projectStickyHeight}px` } as Record<string, string>),
+    [projectStickyHeight],
+  )
   const sheetsReady = sheetStatus?.mode !== "real" || !!googleAuth?.connected
   const paymentRows = useMemo(
     () => ([
@@ -1589,14 +1594,36 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
     cancelGroupRename()
   }, [groups, editingGroupId])
 
+  useEffect(() => {
+    const stickyEl = projectStickyRef.current
+    if (!stickyEl) return
+    let rafId = 0
+    const updateHeight = () => {
+      cancelAnimationFrame(rafId)
+      rafId = requestAnimationFrame(() => {
+        const next = Math.ceil(stickyEl.getBoundingClientRect().height)
+        setProjectStickyHeight((prev) => (prev === next ? prev : next))
+      })
+    }
+    updateHeight()
+    const resizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(updateHeight) : null
+    resizeObserver?.observe(stickyEl)
+    window.addEventListener("resize", updateHeight)
+    return () => {
+      window.removeEventListener("resize", updateHeight)
+      resizeObserver?.disconnect()
+      cancelAnimationFrame(rafId)
+    }
+  }, [tab, project?.id])
+
   if (!Number.isFinite(projectId)) return <div className="panel">PROJECT_ID_INVALID</div>
   if (loading && !project) return <div className="panel">Загрузка…</div>
   if (!project) return <div className="panel">{error || "PROJECT_NOT_FOUND"}</div>
 
   return (
     <>
-    <div className={`grid ${isSettingsOpen ? "page-content-muted" : ""}`}>
-      <div className="sticky-stack">
+    <div className={`grid project-page-grid ${isSettingsOpen ? "page-content-muted" : ""}`} style={projectStickyStyle}>
+      <div className="sticky-stack" ref={projectStickyRef}>
         <div className="panel top-panel">
           <div className="row" style={{ justifyContent: "space-between" }}>
             <div>
@@ -1731,7 +1758,6 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
             const baseTotal = topLevelItems
               .reduce((acc, it) => acc + (itemMathById[it.id]?.total ?? itemInternalTotal(it)), 0)
             const agencyEnabled = !!groupAgencyEnabled[g.id]
-            const agencyPercent = Number(project.agency_fee_percent || 0)
             const agencyAmount = agencyEnabled ? symmetricPercentPart(baseTotal, agencyPercent) : 0
             const total = baseTotal + agencyAmount
 
