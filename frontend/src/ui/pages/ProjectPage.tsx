@@ -222,6 +222,11 @@ type ItemSheetDraft = {
 }
 
 type ItemFormulaField = "qty" | "unit_price_base" | "base_total"
+type ItemFormulaDraft = {
+  formula: string
+  computedValue: string | null
+}
+const ITEM_FORMULA_FIELDS: readonly ItemFormulaField[] = ["qty", "unit_price_base", "base_total"]
 
 function TrashIcon() {
   return (
@@ -617,7 +622,8 @@ export default function ProjectPage() {
   const [editingGroupName, setEditingGroupName] = useState("")
   const [savingGroupId, setSavingGroupId] = useState<number | null>(null)
   const [itemDrafts, setItemDrafts] = useState<Record<number, ItemSheetDraft>>({})
-  const [itemFormulaDrafts, setItemFormulaDrafts] = useState<Record<string, string>>({})
+  const [itemFormulaDrafts, setItemFormulaDrafts] = useState<Record<string, ItemFormulaDraft>>({})
+  const itemFormulaDraftsRef = useRef<Record<string, ItemFormulaDraft>>({})
   const [creatingInGroup, setCreatingInGroup] = useState<number | null>(null)
   const [importingEstimateGroupId, setImportingEstimateGroupId] = useState<number | null>(null)
   const [undoingGroupId, setUndoingGroupId] = useState<number | null>(null)
@@ -649,23 +655,33 @@ export default function ProjectPage() {
     return `${itemId}:${field}`
   }
 
-  function rememberItemFormula(itemId: number, field: ItemFormulaField, rawInput: string) {
+  function rememberItemFormula(
+    itemId: number,
+    field: ItemFormulaField,
+    rawInput: string,
+    options?: { computedValue?: string | null }
+  ) {
     const key = formulaKey(itemId, field)
     const value = rawInput.trim()
+    const computedValue = options?.computedValue?.trim() || null
     setItemFormulaDrafts((prev) => {
+      const previousDraft = prev[key]
       if (!isFormulaLikeInput(value)) {
-        if (!(key in prev)) return prev
+        if (!previousDraft) return prev
+        const currentParsed = parseInputNumber(value)
+        const rememberedComputed = previousDraft.computedValue == null ? null : parseInputNumber(previousDraft.computedValue)
+        if (currentParsed != null && rememberedComputed != null && currentParsed === rememberedComputed) return prev
         const next = { ...prev }
         delete next[key]
         return next
       }
-      if (prev[key] === value) return prev
-      return { ...prev, [key]: value }
+      if (previousDraft?.formula === value && previousDraft.computedValue === computedValue) return prev
+      return { ...prev, [key]: { formula: value, computedValue } }
     })
   }
 
   function restoreItemFormula(itemId: number, draft: ItemSheetDraft, field: ItemFormulaField) {
-    const remembered = itemFormulaDrafts[formulaKey(itemId, field)]
+    const remembered = itemFormulaDrafts[formulaKey(itemId, field)]?.formula
     if (!remembered || draft[field] === remembered) return
     setItemDrafts((prev) => ({
       ...prev,
@@ -674,6 +690,19 @@ export default function ProjectPage() {
         [field]: remembered,
       },
     }))
+  }
+
+  function applyRememberedFormulas(itemId: number, draft: ItemSheetDraft): ItemSheetDraft {
+    let nextDraft = draft
+    for (const field of ITEM_FORMULA_FIELDS) {
+      const remembered = itemFormulaDraftsRef.current[formulaKey(itemId, field)]?.formula
+      if (!remembered || nextDraft[field] === remembered) continue
+      if (nextDraft === draft) {
+        nextDraft = { ...draft }
+      }
+      nextDraft[field] = remembered
+    }
+    return nextDraft
   }
 
   const [planDrafts, setPlanDrafts] = useState<Record<number, PaymentDraft>>({})
@@ -736,6 +765,10 @@ export default function ProjectPage() {
     if (parsed == null || parsed < 0) return Number(project?.project_price_total || 0)
     return parsed
   }, [projectPriceDraft, project?.project_price_total])
+
+  useEffect(() => {
+    itemFormulaDraftsRef.current = itemFormulaDrafts
+  }, [itemFormulaDrafts])
   const expensesDisplay = useMemo(
     () => topLevelItems.reduce((acc, it) => acc + (itemMathById[it.id]?.total ?? itemInternalTotal(it)), 0),
     [topLevelItems, itemMathById],
@@ -1404,7 +1437,14 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
       const payload = payloadFromDraft(draft)
       const updated = await apiPatch<Item>(`/api/projects/${projectId}/items/${item.id}`, payload)
       setItems((prev) => prev.map((it) => (it.id === item.id ? updated : it)))
-      setItemDrafts((prev) => ({ ...prev, [item.id]: itemToSheetDraft(updated) }))
+      setItemDrafts((prev) => {
+        const fromServer = itemToSheetDraft(updated)
+        const withRemembered = applyRememberedFormulas(item.id, fromServer)
+        return {
+          ...prev,
+          [item.id]: withRemembered,
+        }
+      })
     } catch (e) {
       setError(String(e))
     } finally {
@@ -2038,8 +2078,12 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                                     }))
                                   }}
                                   onBlur={(e) => {
-                                    rememberItemFormula(it.id, "qty", e.currentTarget.value)
+                                    if (e.currentTarget.dataset.skipBlurPersist === "1") {
+                                      delete e.currentTarget.dataset.skipBlurPersist
+                                      return
+                                    }
                                     const nextQty = normalizeNumberDraftInputKeepingZero(e.currentTarget.value, draft.qty, { baseRaw: draft.qty })
+                                    rememberItemFormula(it.id, "qty", e.currentTarget.value, { computedValue: nextQty })
                                     const autoTotal = tryCalcBaseTotal(nextQty, draft.unit_price_base)
                                     const next = { ...draft, qty: nextQty, base_total: autoTotal ?? draft.base_total }
                                     setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
@@ -2048,8 +2092,9 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                                   onKeyDown={(e) => {
                                     if (e.key !== "Enter") return
                                     e.preventDefault()
-                                    rememberItemFormula(it.id, "qty", e.currentTarget.value)
+                                    e.currentTarget.dataset.skipBlurPersist = "1"
                                     const nextQty = normalizeNumberDraftInputKeepingZero(e.currentTarget.value, draft.qty, { baseRaw: draft.qty })
+                                    rememberItemFormula(it.id, "qty", e.currentTarget.value, { computedValue: nextQty })
                                     const autoTotal = tryCalcBaseTotal(nextQty, draft.unit_price_base)
                                     const next = { ...draft, qty: nextQty, base_total: autoTotal ?? draft.base_total }
                                     commitItemDraft(it, next)
@@ -2078,8 +2123,12 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                                     }))
                                   }}
                                   onBlur={(e) => {
-                                    rememberItemFormula(it.id, "unit_price_base", e.currentTarget.value)
+                                    if (e.currentTarget.dataset.skipBlurPersist === "1") {
+                                      delete e.currentTarget.dataset.skipBlurPersist
+                                      return
+                                    }
                                     const nextUnit = normalizeNumberDraftInputKeepingZero(e.currentTarget.value, draft.unit_price_base, { baseRaw: draft.unit_price_base })
+                                    rememberItemFormula(it.id, "unit_price_base", e.currentTarget.value, { computedValue: nextUnit })
                                     const autoTotal = tryCalcBaseTotal(draft.qty, nextUnit)
                                     const next = { ...draft, unit_price_base: nextUnit, base_total: autoTotal ?? draft.base_total }
                                     setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
@@ -2088,8 +2137,9 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                                   onKeyDown={(e) => {
                                     if (e.key !== "Enter") return
                                     e.preventDefault()
-                                    rememberItemFormula(it.id, "unit_price_base", e.currentTarget.value)
+                                    e.currentTarget.dataset.skipBlurPersist = "1"
                                     const nextUnit = normalizeNumberDraftInputKeepingZero(e.currentTarget.value, draft.unit_price_base, { baseRaw: draft.unit_price_base })
+                                    rememberItemFormula(it.id, "unit_price_base", e.currentTarget.value, { computedValue: nextUnit })
                                     const autoTotal = tryCalcBaseTotal(draft.qty, nextUnit)
                                     const next = { ...draft, unit_price_base: nextUnit, base_total: autoTotal ?? draft.base_total }
                                     commitItemDraft(it, next)
@@ -2111,22 +2161,27 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                                     handleZeroFocus(e.currentTarget)
                                   }}
                                   onBlur={(e) => {
-                                    rememberItemFormula(it.id, "base_total", e.currentTarget.value)
+                                    if (e.currentTarget.dataset.skipBlurPersist === "1") {
+                                      delete e.currentTarget.dataset.skipBlurPersist
+                                      return
+                                    }
                                     const next = {
                                       ...draft,
                                       base_total: normalizeNumberDraftInputKeepingZero(e.currentTarget.value, draft.base_total, { baseRaw: draft.base_total }),
                                     }
+                                    rememberItemFormula(it.id, "base_total", e.currentTarget.value, { computedValue: next.base_total })
                                     setItemDrafts((prev) => ({ ...prev, [it.id]: next }))
                                     void persistItemRow(it, next)
                                   }}
                                   onKeyDown={(e) => {
                                     if (e.key !== "Enter") return
                                     e.preventDefault()
-                                    rememberItemFormula(it.id, "base_total", e.currentTarget.value)
+                                    e.currentTarget.dataset.skipBlurPersist = "1"
                                     const next = {
                                       ...draft,
                                       base_total: normalizeNumberDraftInputKeepingZero(e.currentTarget.value, draft.base_total, { baseRaw: draft.base_total }),
                                     }
+                                    rememberItemFormula(it.id, "base_total", e.currentTarget.value, { computedValue: next.base_total })
                                     commitItemDraft(it, next)
                                   }}
                                 />
