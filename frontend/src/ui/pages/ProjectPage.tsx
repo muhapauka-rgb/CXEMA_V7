@@ -298,6 +298,12 @@ function toMoneyIntSigned(n: number): string {
   return value > 0 ? `+${abs}` : `-${abs}`
 }
 
+function formatSubitemsMismatch(delta: number): string {
+  const abs = toMoneyInt(Math.abs(delta))
+  if (delta > 0) return `Подстроки больше основной на ${abs}`
+  return `Подстроки меньше основной на ${abs}`
+}
+
 function itemInternalTotal(item: Item): number {
   const base = item.mode === "QTY_PRICE"
     ? (() => {
@@ -1843,7 +1849,7 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
             })
             const showRowTotalColumn = showExtraProfitColumns || showDiscountColumns
             const expenseColumnCount =
-              9
+              10
               + (showRowTotalColumn ? 1 : 0)
               + (showExtraProfitColumns ? 1 : 0)
               + (showDiscountColumns ? 1 : 0)
@@ -1957,6 +1963,7 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                         <th className="col-discount-toggle">Скидка</th>
                         <th className="col-estimate">В<br />смету</th>
                         <th className="col-actions" />
+                        <th className="col-mismatch" />
                       </tr>
                     </thead>
                     <tbody>
@@ -2301,21 +2308,23 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                                 />
                               </td>
                               <td className="col-actions">
-                                <div className="expense-actions-wrap">
-                                  <button
-                                    className="btn icon-btn"
-                                    aria-label="Удалить строку"
-                                    disabled={savingItemId === it.id}
-                                    onClick={() => void deleteItemRow(it.id)}
-                                  >
-                                    <TrashIcon />
-                                  </button>
-                                  {hasSubitemsBaseMismatch && (
-                                    <span className="row-total-hint">
-                                      Сумма вложенных отличается на {toMoneyIntSigned(subitemsBaseDelta)}
-                                    </span>
-                                  )}
-                                </div>
+                                <button
+                                  className="btn icon-btn"
+                                  aria-label="Удалить строку"
+                                  disabled={savingItemId === it.id}
+                                  onClick={() => void deleteItemRow(it.id)}
+                                >
+                                  <TrashIcon />
+                                </button>
+                              </td>
+                              <td className="col-mismatch">
+                                {hasSubitemsBaseMismatch ? (
+                                  <span className="row-mismatch-hint">
+                                    {formatSubitemsMismatch(subitemsBaseDelta)}
+                                  </span>
+                                ) : (
+                                  <span className="muted" />
+                                )}
                               </td>
                             </tr>
                           )

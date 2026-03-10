@@ -1246,6 +1246,16 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   text-align: center;
 }
 
+.expense-table .col-mismatch {
+  width: 250px;
+  min-width: 250px;
+  text-align: left;
+}
+
+.expense-table th.col-mismatch {
+  padding-left: 12px;
+}
+
 .expense-table td.col-qty .input,
 .expense-table td.col-unit .input,
 .expense-table td.col-sum .input,
@@ -1264,6 +1274,11 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 .expense-table td.col-estimate,
 .expense-table td.col-actions {
   vertical-align: middle;
+}
+
+.expense-table td.col-mismatch {
+  vertical-align: middle;
+  padding-left: 12px;
 }
 
 .expense-table td.col-extra-toggle input[type="checkbox"],
@@ -1373,16 +1388,11 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   align-items: center;
 }
 
-.row-total-hint {
-  margin-top: 0;
+.row-mismatch-hint {
   font-size: 11px;
-  color: rgba(255, 45, 161, 0.76);
+  color: rgba(255, 45, 161, 0.82);
   white-space: nowrap;
-  position: absolute;
-  left: calc(100% + 8px);
-  top: 50%;
-  transform: translateY(-50%);
-  pointer-events: none;
+  font-weight: 600;
 }
 
 .sum-mismatch-input {
@@ -1393,15 +1403,6 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 .sum-mismatch-input:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(255, 45, 161, 0.2);
-}
-
-.expense-actions-wrap {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0;
-  width: auto;
 }
 
 .agency-line {
