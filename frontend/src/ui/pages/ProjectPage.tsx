@@ -299,9 +299,7 @@ function toMoneyIntSigned(n: number): string {
 }
 
 function formatSubitemsMismatch(delta: number): string {
-  const abs = toMoneyInt(Math.abs(delta))
-  if (delta > 0) return `Подстроки больше основной на ${abs}`
-  return `Подстроки меньше основной на ${abs}`
+  return toMoneyIntSigned(delta)
 }
 
 function itemInternalTotal(item: Item): number {
