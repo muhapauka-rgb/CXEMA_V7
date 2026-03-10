@@ -1847,7 +1847,7 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
             })
             const showRowTotalColumn = showExtraProfitColumns || showDiscountColumns
             const expenseColumnCount =
-              10
+              9
               + (showRowTotalColumn ? 1 : 0)
               + (showExtraProfitColumns ? 1 : 0)
               + (showDiscountColumns ? 1 : 0)
@@ -1961,7 +1961,6 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                         <th className="col-discount-toggle">Скидка</th>
                         <th className="col-estimate">В<br />смету</th>
                         <th className="col-actions" />
-                        <th className="col-mismatch" />
                       </tr>
                     </thead>
                     <tbody>
@@ -2306,23 +2305,21 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                                 />
                               </td>
                               <td className="col-actions">
-                                <button
-                                  className="btn icon-btn"
-                                  aria-label="Удалить строку"
-                                  disabled={savingItemId === it.id}
-                                  onClick={() => void deleteItemRow(it.id)}
-                                >
-                                  <TrashIcon />
-                                </button>
-                              </td>
-                              <td className="col-mismatch">
-                                {hasSubitemsBaseMismatch ? (
-                                  <span className="row-mismatch-hint">
-                                    {formatSubitemsMismatch(subitemsBaseDelta)}
-                                  </span>
-                                ) : (
-                                  <span className="muted" />
-                                )}
+                                <div className="expense-actions-wrap">
+                                  <button
+                                    className="btn icon-btn"
+                                    aria-label="Удалить строку"
+                                    disabled={savingItemId === it.id}
+                                    onClick={() => void deleteItemRow(it.id)}
+                                  >
+                                    <TrashIcon />
+                                  </button>
+                                  {hasSubitemsBaseMismatch && (
+                                    <span className="row-total-hint">
+                                      {formatSubitemsMismatch(subitemsBaseDelta)}
+                                    </span>
+                                  )}
+                                </div>
                               </td>
                             </tr>
                           )
