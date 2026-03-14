@@ -12,9 +12,10 @@ import time
 from typing import Any, Dict, Optional, Set
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from urllib.parse import quote
 
 from ..db import get_db
 from ..models import ClientBillingAdjustment, ClientPaymentsPlan, ExpenseGroup, ExpenseItem, ItemMode, Project
@@ -995,10 +996,10 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
       margin-bottom:0;
     }}
     .total {{
-      border:1px solid var(--line);
-      border-radius:8px;
+      border:0;
+      border-radius:0;
       padding:6px 8px;
-      background:#fff;
+      background:transparent;
       font-family:"Roboto","Segoe UI",Arial,sans-serif !important;
     }}
     .totals-strip .total {{ text-align:center; }}
@@ -1965,6 +1966,42 @@ def estimate2_page(
         common_agency_enabled=bool(common_agency),
     )
     return HTMLResponse(content=_render_estimate2_html(payload), media_type="text/html; charset=utf-8")
+
+
+@router.get("/{project_id}/estimate2/pdf")
+def estimate2_pdf(
+    project_id: int,
+    group_agency_ids: Optional[str] = Query(default=None),
+    common_agency: bool = Query(default=False),
+    db: Session = Depends(get_db),
+):
+    project = _project_or_404(db, project_id)
+    try:
+        payload = _estimate_payload(
+            db,
+            project_id,
+            group_agency_ids=_parse_group_ids(group_agency_ids),
+            common_agency_enabled=bool(common_agency),
+        )
+        html = _render_estimate2_html(payload)
+        pdf_bytes = _render_pdf_from_html(html)
+        file_name = _estimate_pdf_file_name(project.title)
+        headers = {
+            "Content-Disposition": (
+                f'attachment; filename="estimate.pdf"; filename*=UTF-8\'\'{quote(file_name)}'
+            )
+        }
+        return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        detail = str(exc)
+        status = 400
+        if detail in {"PDF_LIBRARIES_NOT_INSTALLED", "BROWSER_PDF_NOT_INSTALLED", "BROWSER_PDF_RENDER_FAILED"}:
+            status = 500
+        raise HTTPException(status_code=status, detail=detail) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.post("/{project_id}/estimate/drive-upload")

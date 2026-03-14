@@ -1039,6 +1039,11 @@ html[data-theme="light"] .overview-table tbody td:last-child {
   margin-bottom: 72px;
 }
 
+.sheets-links-row-primary .sheets-link-btn {
+  flex: 0 0 auto;
+  color: var(--text);
+}
+
 .sheets-link-btn {
   min-height: auto;
   padding: 0;
@@ -1055,10 +1060,6 @@ html[data-theme="light"] .overview-table tbody td:last-child {
 
 .sheets-link-btn:hover:not(:disabled) {
   background: transparent;
-  color: var(--text);
-}
-
-.sheets-links-row-primary .sheets-link-btn {
   color: var(--text);
 }
 

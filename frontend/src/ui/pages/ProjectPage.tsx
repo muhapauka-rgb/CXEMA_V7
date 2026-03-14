@@ -605,6 +605,8 @@ export default function ProjectPage() {
   const [error, setError] = useState<string | null>(null)
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null)
   const [driveUpload2Busy, setDriveUpload2Busy] = useState(false)
+  const [estimate2DriveUrl, setEstimate2DriveUrl] = useState<string | null>(null)
+  const [estimate2SaveBusy, setEstimate2SaveBusy] = useState(false)
   const [projectPriceDraft, setProjectPriceDraft] = useState("0")
   const [savingProjectPrice, setSavingProjectPrice] = useState(false)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
@@ -1024,6 +1026,11 @@ export default function ProjectPage() {
     }
   }, [])
 
+  useEffect(() => {
+    setEstimate2DriveUrl(null)
+    setEstimate2SaveBusy(false)
+  }, [projectId])
+
   function driveFileViewUrl(fileId?: string | null): string | null {
     const id = String(fileId || "").trim()
     if (!id) return null
@@ -1037,11 +1044,97 @@ export default function ProjectPage() {
     openEstimatePreviewPopup(url)
   }
 
+  function estimatePdfDownloadFileName(projectTitle?: string | null) {
+    const raw = String(projectTitle || "").trim()
+    const base = (raw || "Проект")
+      .replace(/[\\/:*?"<>|]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+    return `Смета-${base || "Проект"}.pdf`
+  }
+
+  function estimate2PdfUrl() {
+    const qs = buildEstimateQueryString()
+    return `${API_BASE}/api/projects/${projectId}/estimate2/pdf${qs ? `?${qs}` : ""}`
+  }
+
+  async function copyEstimate2DriveLink() {
+    const url = String(estimate2DriveUrl || "").trim()
+    if (!url) return
+    try {
+      await navigator.clipboard.writeText(url)
+      setError(null)
+      setSheetsNotice("Ссылка на PDF скопирована.")
+    } catch (e) {
+      setError(`Не удалось скопировать ссылку: ${String(e)}`)
+    }
+  }
+
+  async function saveEstimate2Pdf() {
+    if (!Number.isFinite(projectId)) return
+    const filename = estimatePdfDownloadFileName(project?.title)
+    try {
+      setError(null)
+      setSheetsNotice(null)
+      setEstimate2SaveBusy(true)
+      const res = await fetch(estimate2PdfUrl())
+      if (!res.ok) throw new Error(await res.text())
+      const blob = await res.blob()
+
+      const savePicker = (window as typeof window & {
+        showSaveFilePicker?: (options?: Record<string, unknown>) => Promise<{
+          createWritable: () => Promise<{
+            write: (data: Blob) => Promise<void>
+            close: () => Promise<void>
+          }>
+        }>
+      }).showSaveFilePicker
+
+      if (savePicker) {
+        try {
+          const handle = await savePicker({
+            suggestedName: filename,
+            startIn: "downloads",
+            types: [
+              {
+                description: "PDF",
+                accept: { "application/pdf": [".pdf"] },
+              },
+            ],
+          })
+          const writable = await handle.createWritable()
+          await writable.write(blob)
+          await writable.close()
+          setSheetsNotice(`PDF сохранён: ${filename}`)
+          return
+        } catch (e) {
+          const name = String((e as { name?: string } | null)?.name || "")
+          if (name === "AbortError") return
+        }
+      }
+
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      setSheetsNotice(`PDF сохранён: ${filename}`)
+    } catch (e) {
+      setError(`Не удалось сохранить PDF: ${String(e)}`)
+    } finally {
+      setEstimate2SaveBusy(false)
+    }
+  }
+
   async function uploadEstimate2ToDrive() {
     if (!Number.isFinite(projectId)) return
     try {
       setError(null)
       setSheetsNotice(null)
+      setEstimate2DriveUrl(null)
       setDriveUpload2Busy(true)
       const qs = buildEstimateQueryString()
       // Open the same HTML template as "Просмотр", so layout is 1:1 identical.
@@ -1061,6 +1154,9 @@ export default function ProjectPage() {
             ((out.folder_id || "").trim() ? `https://drive.google.com/drive/folders/${encodeURIComponent(String(out.folder_id))}` : "")
           if (!target) {
             setError("PDF открыт. Фоновое сохранение в Google Drive завершилось без ссылки на файл.")
+          } else {
+            setEstimate2DriveUrl(target)
+            setSheetsNotice("PDF сформирован и сохранён в Google Drive.")
           }
         } catch (e) {
           setError(`PDF открыт. Ошибка фонового сохранения в Google Drive: ${String(e)}`)
@@ -2518,6 +2614,20 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
                 onClick={() => void uploadEstimate2ToDrive()}
               >
                 {driveUpload2Busy ? "Отправка..." : "PDF"}
+              </button>
+              <button
+                className="btn sheets-link-btn"
+                disabled={!estimate2DriveUrl || driveUpload2Busy}
+                onClick={() => void copyEstimate2DriveLink()}
+              >
+                Копировать ссылку
+              </button>
+              <button
+                className="btn sheets-link-btn"
+                disabled={estimate2SaveBusy}
+                onClick={() => void saveEstimate2Pdf()}
+              >
+                {estimate2SaveBusy ? "Сохранение..." : "Сохранить"}
               </button>
             </div>
 
