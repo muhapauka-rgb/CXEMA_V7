@@ -1044,7 +1044,7 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
       border-right:0 !important;
       padding:0;
       height:21px;
-      background:var(--bg);
+      background:#fff;
       line-height:0;
     }}
     .group-gap td {{

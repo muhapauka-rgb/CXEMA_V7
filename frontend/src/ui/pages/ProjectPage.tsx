@@ -1040,7 +1040,9 @@ export default function ProjectPage() {
   function openEstimate2Page() {
     if (!Number.isFinite(projectId)) return
     const qs = buildEstimateQueryString()
-    const url = `${API_BASE}/api/projects/${projectId}/estimate2/page${qs ? `?${qs}` : ""}`
+    const nonce = `_ts=${Date.now()}`
+    const query = qs ? `${qs}&${nonce}` : nonce
+    const url = `${API_BASE}/api/projects/${projectId}/estimate2/page?${query}`
     openEstimatePreviewPopup(url)
   }
 
@@ -1055,7 +1057,9 @@ export default function ProjectPage() {
 
   function estimate2PdfUrl() {
     const qs = buildEstimateQueryString()
-    return `${API_BASE}/api/projects/${projectId}/estimate2/pdf${qs ? `?${qs}` : ""}`
+    const nonce = `_ts=${Date.now()}`
+    const query = qs ? `${qs}&${nonce}` : nonce
+    return `${API_BASE}/api/projects/${projectId}/estimate2/pdf?${query}`
   }
 
   async function copyEstimate2DriveLink() {
@@ -1137,8 +1141,10 @@ export default function ProjectPage() {
       setEstimate2DriveUrl(null)
       setDriveUpload2Busy(true)
       const qs = buildEstimateQueryString()
+      const nonce = `_ts=${Date.now()}`
+      const previewQuery = qs ? `${qs}&${nonce}` : nonce
       // Open the same HTML template as "Просмотр", so layout is 1:1 identical.
-      const previewUrl = `${API_BASE}/api/projects/${projectId}/estimate2/page${qs ? `?${qs}` : ""}`
+      const previewUrl = `${API_BASE}/api/projects/${projectId}/estimate2/page?${previewQuery}`
       openEstimatePopup(previewUrl)
 
       // Save to Google Drive in background, do not block local PDF preview.
