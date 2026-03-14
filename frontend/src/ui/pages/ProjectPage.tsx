@@ -1064,11 +1064,18 @@ export default function ProjectPage() {
 
   async function copyEstimate2DriveLink() {
     const url = String(estimate2DriveUrl || "").trim()
-    if (!url) return
+    if (!url) {
+      if (driveUpload2Busy) {
+        setError("Ссылка ещё не готова: PDF всё ещё формируется и загружается в Google Drive.")
+      } else {
+        setError("Ссылку пока нельзя скопировать: сначала нажми PDF и дождись сохранения файла в Google Drive.")
+      }
+      return
+    }
     try {
       await navigator.clipboard.writeText(url)
       setError(null)
-      setSheetsNotice("Ссылка на PDF скопирована.")
+      setSheetsNotice(null)
     } catch (e) {
       setError(`Не удалось скопировать ссылку: ${String(e)}`)
     }
@@ -2623,7 +2630,6 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
               </button>
               <button
                 className="btn sheets-link-btn"
-                disabled={!estimate2DriveUrl || driveUpload2Busy}
                 onClick={() => void copyEstimate2DriveLink()}
               >
                 Копировать ссылку
