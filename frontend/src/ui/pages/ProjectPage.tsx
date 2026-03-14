@@ -139,6 +139,7 @@ type GoogleAuthStatus = {
 
 type EstimateDriveUpload = {
   ok: boolean
+  exists?: boolean
   file_id?: string | null
   name?: string | null
   web_view_link?: string | null
@@ -1063,16 +1064,28 @@ export default function ProjectPage() {
   }
 
   async function copyEstimate2DriveLink() {
-    const url = String(estimate2DriveUrl || "").trim()
-    if (!url) {
-      if (driveUpload2Busy) {
-        setError("Ссылка ещё не готова: PDF всё ещё формируется и загружается в Google Drive.")
-      } else {
-        setError("Ссылку пока нельзя скопировать: сначала нажми PDF и дождись сохранения файла в Google Drive.")
-      }
-      return
-    }
     try {
+      let url = String(estimate2DriveUrl || "").trim()
+      if (!url) {
+        if (driveUpload2Busy) {
+          setError("Ссылка ещё не готова: PDF всё ещё формируется и загружается в Google Drive.")
+          return
+        }
+        const out = await apiGet<EstimateDriveUpload>(`/api/projects/${projectId}/estimate2/drive-link`)
+        url =
+          (out.web_view_link || "").trim() ||
+          driveFileViewUrl(out.file_id) ||
+          ((out.folder_id || "").trim() ? `https://drive.google.com/drive/folders/${encodeURIComponent(String(out.folder_id))}` : "")
+        if (!url) {
+          if (out.exists === false) {
+            setError("Ссылку пока нельзя скопировать: PDF ещё не сформирован и не сохранён в Google Drive.")
+          } else {
+            setError("Не удалось получить ссылку на PDF из Google Drive.")
+          }
+          return
+        }
+        setEstimate2DriveUrl(url)
+      }
       await navigator.clipboard.writeText(url)
       setError(null)
       setSheetsNotice(null)
@@ -2630,6 +2643,7 @@ function payloadFromDraft(draft: ItemSheetDraft): Record<string, unknown> {
               </button>
               <button
                 className="btn sheets-link-btn"
+                disabled={driveUpload2Busy}
                 onClick={() => void copyEstimate2DriveLink()}
               >
                 Копировать ссылку

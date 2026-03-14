@@ -215,29 +215,15 @@ def _upload_or_replace_pdf_in_drive(
     file_name: str,
     pdf_bytes: bytes,
 ) -> Dict[str, Any]:
+    existing = _find_existing_pdf_in_drive(
+        drive_api=drive_api,
+        folder_id=folder_id,
+        file_name=file_name,
+    )
     try:
         from googleapiclient.http import MediaInMemoryUpload
     except Exception as exc:
         raise ValueError("GOOGLE_LIBRARIES_NOT_INSTALLED") from exc
-
-    safe_name = _escape_drive_query_value(file_name)
-    query = (
-        f"name='{safe_name}' and mimeType='application/pdf' and trashed=false"
-    )
-    if folder_id:
-        safe_folder = _escape_drive_query_value(folder_id)
-        query = f"'{safe_folder}' in parents and {query}"
-    else:
-        query = f"'root' in parents and {query}"
-
-    existing = drive_api.files().list(
-        q=query,
-        fields="files(id,name,parents,modifiedTime,webViewLink,webContentLink)",
-        orderBy="modifiedTime desc",
-        pageSize=1,
-        supportsAllDrives=True,
-        includeItemsFromAllDrives=True,
-    ).execute().get("files", [])
 
     media = MediaInMemoryUpload(pdf_bytes, mimetype="application/pdf", resumable=False)
     if existing:
@@ -270,6 +256,31 @@ def _upload_or_replace_pdf_in_drive(
         fields="id,name,webViewLink,webContentLink,parents",
         supportsAllDrives=True,
     ).execute()
+
+
+def _find_existing_pdf_in_drive(
+    drive_api: Any,
+    folder_id: Optional[str],
+    file_name: str,
+) -> list[Dict[str, Any]]:
+    safe_name = _escape_drive_query_value(file_name)
+    query = (
+        f"name='{safe_name}' and mimeType='application/pdf' and trashed=false"
+    )
+    if folder_id:
+        safe_folder = _escape_drive_query_value(folder_id)
+        query = f"'{safe_folder}' in parents and {query}"
+    else:
+        query = f"'root' in parents and {query}"
+
+    return drive_api.files().list(
+        q=query,
+        fields="files(id,name,parents,modifiedTime,webViewLink,webContentLink)",
+        orderBy="modifiedTime desc",
+        pageSize=1,
+        supportsAllDrives=True,
+        includeItemsFromAllDrives=True,
+    ).execute().get("files", [])
 
 
 def _estimate_pdf_file_name(project_title: Optional[str]) -> str:
@@ -2104,6 +2115,57 @@ def upload_estimate2_to_drive(
             status = 401
         if detail in {"PDF_LIBRARIES_NOT_INSTALLED", "BROWSER_PDF_NOT_INSTALLED", "BROWSER_PDF_RENDER_FAILED"}:
             status = 500
+        raise HTTPException(status_code=status, detail=detail) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/{project_id}/estimate2/drive-link")
+def estimate2_drive_link(
+    project_id: int,
+    db: Session = Depends(get_db),
+):
+    project = _project_or_404(db, project_id)
+    try:
+        creds = _load_google_credentials(required=True)
+        _, _, _, build = _import_google_deps()
+
+        drive = build("drive", "v3", credentials=creds, cache_discovery=False)
+        folder_id = _resolve_drive_folder_id(drive, project)
+        file_name = _estimate_pdf_file_name(project.title)
+        existing = _find_existing_pdf_in_drive(
+            drive_api=drive,
+            folder_id=folder_id,
+            file_name=file_name,
+        )
+        if not existing:
+            return {
+                "ok": True,
+                "exists": False,
+                "file_id": None,
+                "name": file_name,
+                "web_view_link": None,
+                "web_content_link": None,
+                "folder_id": folder_id,
+            }
+
+        target = existing[0]
+        return {
+            "ok": True,
+            "exists": True,
+            "file_id": target.get("id"),
+            "name": target.get("name") or file_name,
+            "web_view_link": _drive_web_view_link(target),
+            "web_content_link": target.get("webContentLink"),
+            "folder_id": folder_id,
+        }
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        detail = str(exc)
+        status = 400
+        if detail in {"GOOGLE_AUTH_REQUIRED", "GOOGLE_TOKEN_INVALID", "GOOGLE_TOKEN_REFRESH_FAILED"}:
+            status = 401
         raise HTTPException(status_code=status, detail=detail) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
