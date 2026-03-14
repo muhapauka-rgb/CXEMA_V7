@@ -996,10 +996,10 @@ def _render_estimate_html(payload: dict[str, Any]) -> str:
       margin-bottom:0;
     }}
     .total {{
-      border:0;
+      border:1px solid var(--line);
       border-radius:0;
       padding:6px 8px;
-      background:transparent;
+      background:#fff;
       font-family:"Roboto","Segoe UI",Arial,sans-serif !important;
     }}
     .totals-strip .total {{ text-align:center; }}
@@ -1290,10 +1290,10 @@ def _render_estimate2_html(payload: dict[str, Any]) -> str:
       margin-bottom:30px;
     }}
     .total {{
-      border:0;
+      border:1px solid var(--line);
       border-radius:0;
       padding:6px 8px;
-      background:transparent;
+      background:#fff;
       font-family:"Roboto","Segoe UI",Arial,sans-serif !important;
     }}
     .totals-strip .total {{ text-align:center; }}
